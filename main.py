@@ -10,8 +10,15 @@ from fastapi import FastAPI
 
 app = FastAPI()
 
-# Global tracking for paper trading logs visible via web browser
+# Global tracking arrays and metrics
 trade_logs = []
+performance = {
+    "wins": 0,
+    "losses": 0,
+    "total_trades": 0,
+    "win_rate": "0.00%"
+}
+active_trade = None  # Will hold {"entry_price": float, "direction": float, "timestamp": str}
 
 # Load ONNX Engine
 MODEL_PATH = "veto_engine.onnx"
@@ -20,50 +27,40 @@ input_name = session.get_inputs()[0].name
 label_name = session.get_outputs()[0].name
 prob_name = session.get_outputs()[1].name
 
-# Initialize Coinbase Exchange connection (Public data only for paper trading)
+# Initialize Coinbase Exchange connection
 exchange = ccxt.coinbase({
     'enableRateLimit': True,
-    'options': {'defaultType': 'swap'}  # Points to Perp/Futures markets
+    'options': {'defaultType': 'swap'}
 })
-SYMBOL = 'SOL/USDC:USDC'  # Coinbase SOL Perpetual pair
+SYMBOL = 'SOL/USDC:USDC'
 
 def fetch_and_engineer_features():
     try:
-        # Fetch 100 historical 15m candles to calculate indicators safely
         candles = exchange.fetch_ohlcv(SYMBOL, timeframe='15m', limit=100)
         df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
-        # --- FEATURE ENGINEERING MATCHING YOUR MODEL (10 FEATURES) ---
-        # 1 & 2. ADX metrics
+        # --- FEATURE ENGINEERING (10 FEATURES) ---
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
         df['currentADX'] = adx_df['ADX_14']
         df['prevADX'] = adx_df['ADX_14'].shift(1)
-        
-        # 3. RSI
         df['rsi'] = ta.rsi(df['close'], length=14)
-        
-        # 4. Relative Volume (rvol) vs 20-period average
         df['rvol'] = df['volume'] / df['volume'].rolling(window=20).mean()
         
-        # 5. ATR Percentage
         atr = ta.atr(df['high'], df['low'], df['close'], length=14)
         df['atrPercentage'] = atr / df['close']
         
-        # 6, 7, 8. Candle Mechanics
         df['bodySize'] = (df['close'] - df['open']).abs()
         df['lowerWick'] = df[['open', 'close']].min(axis=1) - df['low']
         df['upperWick'] = df['high'] - df[['open', 'close']].max(axis=1)
         
-        # 9 & 10. Strategic System Intent Flags (Mock placeholders - replace with your entry signal logic)
-        df['directionIntent'] = 1.0  # 1 for Long, -1 for Short based on your core strategy
-        df['isWhipsaw'] = 0.0        # Flag 1.0 if inside a choppy regime, else 0.0
+        # Strategy Direction Flags
+        df['directionIntent'] = 1.0  # 1.0 for Long, -1.0 for Short
+        df['isWhipsaw'] = 0.0
         
-        # Grab the most recently CLOSED candle (Index -2, since -1 is changing live)
         live_row = df.iloc[-2]
         
-        # Check for NaNs due to indicator warmup periods
         if live_row.isnull().any():
-            return None, "Indicators warming up..."
+            return None, "Indicators warming up...", None
             
         feature_order = [
             'rvol', 'rsi', 'currentADX', 'prevADX', 'atrPercentage', 
@@ -72,58 +69,97 @@ def fetch_and_engineer_features():
         
         input_vector = live_row[feature_order].values.astype(np.float32).reshape(1, 10)
         timestamp_str = pd.to_datetime(live_row['timestamp'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
+        current_close = float(live_row['close'])
         
-        return input_vector, timestamp_str
+        return input_vector, timestamp_str, current_close
         
     except Exception as e:
-        return None, f"Data fetch error: {str(e)}"
+        return None, f"Data fetch error: {str(e)}", None
 
 def trading_loop():
-    """Background loop that executes every 15 minutes at the candle boundary"""
-    print("🚀 Paper Trading Core Engine Started...")
+    global active_trade
+    print("🚀 Upgraded Paper Trading Engine with Performance Ledger Tracking Started...")
+    
     while True:
-        # Code execution syncs to the next 15-minute close interval
+        # Sync loop execution to the next 15-minute close interval
         current_time = time.time()
         time_to_next_candle = 900 - (current_time % 900)
-        # Sleep until the exact second the current candle finishes
-        time.sleep(time_to_next_candle + 5) # 5-second buffer for exchange latency
+        time.sleep(time_to_next_candle + 5)
         
-        features, meta = fetch_and_engineer_features()
+        features, meta, current_close = fetch_and_engineer_features()
         
         if features is None:
-            log_msg = f"⚠️ [SKIPPED] {meta}"
-            print(log_msg)
-            trade_logs.append(log_msg)
+            print(f"⚠️ [SKIPPED] {meta}")
             continue
             
-        # Run inference
+        # 1. SETTLE ANY ACTIVE HISTORICAL TRADE FIRST
+        if active_trade is not None:
+            entry_p = active_trade["entry_price"]
+            direction = active_trade["direction"]
+            
+            # Determine outcome based on price delta and direction
+            if direction == 1.0:  # Long Setup
+                is_win = current_close > entry_p
+            else:                 # Short Setup
+                is_win = current_close < entry_p
+                
+            pnl_pct = ((current_close - entry_p) / entry_p) * direction * 100
+            
+            # Update running stats object
+            performance["total_trades"] += 1
+            if is_win:
+                performance["wins"] += 1
+                outcome_str = "🎉 WIN"
+            else:
+                performance["losses"] += 1
+                outcome_str = "🛑 LOSS"
+                
+            # Calculate updated win percentage string
+            win_val = (performance["wins"] / performance["total_trades"]) * 100
+            performance["win_rate"] = f"{win_val:.2f}%"
+            
+            settlement_log = f"📊 [SETTLED] Trade from {active_trade['timestamp']} | Outcome: {outcome_str} ({pnl_pct:+.2f}%) | Entry: {entry_p} -> Exit: {current_close}"
+            print(settlement_log)
+            trade_logs.append(settlement_log)
+            
+            # Clear position memory to make room for new trade opportunities
+            active_trade = None
+
+        # 2. RUN INFERENCE FOR NEW TRADE OPPORTUNITIES
         pred_label, pred_prob = session.run([label_name, prob_name], {input_name: features})
         
         label = int(pred_label[0])
-        prob_loss = float(pred_prob[0][0])
         prob_win = float(pred_prob[0][1])
+        direction_intent = float(features[0][8]) # Extract directionIntent from vector
         
-        # Filter action based on model outcome
-        # (Assuming 0 = Veto/Loss, 1 = Safe/Win setup)
-        decision = "❌ VETO (Trade Blocked)" if label == 0 else "✅ ALLOWED (Simulating Entry)"
-        
-        log_entry = f"🕒 [{meta}] Win Prob: {prob_win:.2%} | Loss Prob: {prob_loss:.2%} | Action: {decision}"
+        if label == 1:
+            # Veto engine approved the signal! Record paper trade entry details
+            active_trade = {
+                "entry_price": current_close,
+                "direction": direction_intent,
+                "timestamp": meta
+            }
+            decision = f"✅ ALLOWED (Simulating Entry @ {current_close})"
+        else:
+            decision = "❌ VETO (Trade Blocked)"
+            
+        log_entry = f"🕒 [{meta}] Win Prob: {prob_win:.2%} | Action: {decision}"
         print(log_entry)
         trade_logs.append(log_entry)
         
-        # Limit global log list size in memory
         if len(trade_logs) > 200:
             trade_logs.pop(0)
 
-# Start trading loop execution in an independent background thread
+# Start background tracking execution loop
 threading.Thread(target=trading_loop, daemon=True).start()
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def health_and_dashboard():
-    """Web UI to prevent Render Free Tier from sleeping and monitor outputs"""
+    """Exposes current paper trading win rates and logs directly via the browser"""
     return {
         "status": "online",
         "market": "SOL-PERP (Coinbase)",
-        "model_loaded": True,
-        "recent_paper_trades": trade_logs[::-1] # Show newest logs first
+        "live_metrics": performance,
+        "current_position": active_trade,
+        "recent_activity_logs": trade_logs[::-1]
     }
