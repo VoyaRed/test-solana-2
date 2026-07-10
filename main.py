@@ -195,22 +195,13 @@ def trading_loop():
             direction_intent = float(features[0][8])
             
             if label == 1:
-                # Dynamic Sizing Engine Framework
-                try:
-                    balance_data = exchange.fetch_balance()
-                    account_equity = float(balance_data['free']['USDC'] if 'USDC' in balance_data['free'] else 100.0)
-                except Exception:
-                    account_equity = 100.0  # Fallback allocation layer
-                    
+                # Calculate stop loss distance for target brackets
                 stop_loss_distance = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
                 
-                if stop_loss_distance > 0:
-                    target_dollar_risk = account_equity * RISK_SETTINGS["riskPct"]
-                    calculated_size = target_dollar_risk / stop_loss_distance
-                    # Safe rounding floor mapping to standard crypto lot steps
-                    contract_size = round(calculated_size, 2) if calculated_size >= 0.01 else 0.25
-                else:
-                    contract_size = 0.25  # Standard default backstop
+                # --- FIXED EXCHANGE MINIMUM OVERRIDE ---
+                # Forces absolute minimum integer size allowed by Coinbase (1 Contract = 5 SOL)
+                contract_size = 1
+                # ----------------------------------------
                     
                 entry_p = pricing["close"]
                 
