@@ -18,7 +18,7 @@ performance = {
     "total_trades": 0,
     "win_rate": "0.00%"
 }
-active_trade = None  # Will hold {"entry_price": float, "direction": float, "timestamp": str}
+active_trade = None  # Holds {"entry_price": float, "direction": float, "timestamp": str}
 
 # Load ONNX Engine
 MODEL_PATH = "veto_engine.onnx"
@@ -27,7 +27,7 @@ input_name = session.get_inputs()[0].name
 label_name = session.get_outputs()[0].name
 prob_name = session.get_outputs()[1].name
 
-# Initialize Coinbase Exchange connection
+# Initialize Coinbase Exchange connection (Public market data only)
 exchange = ccxt.coinbase({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'}
@@ -36,6 +36,7 @@ SYMBOL = 'SOL/USDC:USDC'
 
 def fetch_and_engineer_features():
     try:
+        # Fetch 100 historical 15m candles to calculate indicators accurately
         candles = exchange.fetch_ohlcv(SYMBOL, timeframe='15m', limit=100)
         df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
@@ -53,10 +54,11 @@ def fetch_and_engineer_features():
         df['lowerWick'] = df[['open', 'close']].min(axis=1) - df['low']
         df['upperWick'] = df['high'] - df[['open', 'close']].max(axis=1)
         
-        # Strategy Direction Flags
-        df['directionIntent'] = 1.0  # 1.0 for Long, -1.0 for Short
+        # Strategy Direction Flags (1.0 = Long, -1.0 = Short)
+        df['directionIntent'] = 1.0  
         df['isWhipsaw'] = 0.0
         
+        # Evaluate the most recently CLOSED candle
         live_row = df.iloc[-2]
         
         if live_row.isnull().any():
@@ -81,59 +83,61 @@ def trading_loop():
     print("🚀 Upgraded Paper Trading Engine with Performance Ledger Tracking Started...")
     
     while True:
-        # Sync loop execution to the next 15-minute close interval
+        # Sync loop execution to the next flat 15-minute interval
         current_time = time.time()
         time_to_next_candle = 900 - (current_time % 900)
-        time.sleep(time_to_next_candle + 5)
+        time.sleep(time_to_next_candle + 5) # 5-second buffer for exchange lag
         
+        # 1. ALWAYS SETTLE ACTIVE TRADES FIRST (Bulletproof Isolation)
+        if active_trade is not None:
+            try:
+                # Use a fast ticker fetch to close trades regardless of indicator calculation errors
+                ticker = exchange.fetch_ticker(SYMBOL)
+                current_close = float(ticker['close'])
+                
+                entry_p = active_trade["entry_price"]
+                direction = active_trade["direction"]
+                
+                if direction == 1.0:
+                    is_win = current_close > entry_p
+                else:
+                    is_win = current_close < entry_p
+                    
+                pnl_pct = ((current_close - entry_p) / entry_p) * direction * 100
+                
+                performance["total_trades"] += 1
+                if is_win:
+                    performance["wins"] += 1
+                    outcome_str = "🎉 WIN"
+                else:
+                    performance["losses"] += 1
+                    outcome_str = "🛑 LOSS"
+                    
+                win_val = (performance["wins"] / performance["total_trades"]) * 100
+                performance["win_rate"] = f"{win_val:.2f}%"
+                
+                settlement_log = f"📊 [SETTLED] Trade from {active_trade['timestamp']} | Outcome: {outcome_str} ({pnl_pct:+.2f}%) | Entry: {entry_p} -> Exit: {current_close}"
+                print(settlement_log)
+                trade_logs.append(settlement_log)
+                
+                active_trade = None # Position cleared safely
+            except Exception as e:
+                print(f"⚠️ Critical: Failed to settle trade on time due to exchange error: {str(e)}")
+
+        # 2. RUN INFERENCE FOR NEW TRADE OPPORTUNITIES
         features, meta, current_close = fetch_and_engineer_features()
         
         if features is None:
-            print(f"⚠️ [SKIPPED] {meta}")
+            print(f"⚠️ [SKIPPED NEW EVALUATION] {meta}")
             continue
             
-        # 1. SETTLE ANY ACTIVE HISTORICAL TRADE FIRST
-        if active_trade is not None:
-            entry_p = active_trade["entry_price"]
-            direction = active_trade["direction"]
-            
-            # Determine outcome based on price delta and direction
-            if direction == 1.0:  # Long Setup
-                is_win = current_close > entry_p
-            else:                 # Short Setup
-                is_win = current_close < entry_p
-                
-            pnl_pct = ((current_close - entry_p) / entry_p) * direction * 100
-            
-            # Update running stats object
-            performance["total_trades"] += 1
-            if is_win:
-                performance["wins"] += 1
-                outcome_str = "🎉 WIN"
-            else:
-                performance["losses"] += 1
-                outcome_str = "🛑 LOSS"
-                
-            # Calculate updated win percentage string
-            win_val = (performance["wins"] / performance["total_trades"]) * 100
-            performance["win_rate"] = f"{win_val:.2f}%"
-            
-            settlement_log = f"📊 [SETTLED] Trade from {active_trade['timestamp']} | Outcome: {outcome_str} ({pnl_pct:+.2f}%) | Entry: {entry_p} -> Exit: {current_close}"
-            print(settlement_log)
-            trade_logs.append(settlement_log)
-            
-            # Clear position memory to make room for new trade opportunities
-            active_trade = None
-
-        # 2. RUN INFERENCE FOR NEW TRADE OPPORTUNITIES
         pred_label, pred_prob = session.run([label_name, prob_name], {input_name: features})
         
         label = int(pred_label[0])
         prob_win = float(pred_prob[0][1])
-        direction_intent = float(features[0][8]) # Extract directionIntent from vector
+        direction_intent = float(features[0][8])
         
         if label == 1:
-            # Veto engine approved the signal! Record paper trade entry details
             active_trade = {
                 "entry_price": current_close,
                 "direction": direction_intent,
@@ -150,7 +154,7 @@ def trading_loop():
         if len(trade_logs) > 200:
             trade_logs.pop(0)
 
-# Start background tracking execution loop
+# Start background tracking thread
 threading.Thread(target=trading_loop, daemon=True).start()
 
 @app.api_route("/", methods=["GET", "HEAD"])
