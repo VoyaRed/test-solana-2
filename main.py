@@ -198,10 +198,11 @@ def trading_loop():
                 # Calculate stop loss distance for target brackets
                 stop_loss_distance = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
                 
-                # --- FIXED EXCHANGE MINIMUM OVERRIDE ---
-                # Forces absolute minimum integer size allowed by Coinbase (1 Contract = 5 SOL)
-                contract_size = 1
-                # ----------------------------------------
+                # --- FIXED POSITION SIZE FOR JUPITER PERPS ---
+                # 0.75 SOL contracts matches 0.15 SOL collateral leveraged 5x (~$58 total position)
+                # This smoothly clears Jupiter's 10 USDC minimum collateral limit.
+                contract_size = 0.75
+                # ----------------------------------------------
                     
                 entry_p = pricing["close"]
                 
