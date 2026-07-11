@@ -13,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
 
 # --- MIDDLEWARE ---
-# Enables the frontend to communicate with the backend smoothly
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -33,7 +32,8 @@ STATE = {
         "total_trades": 0,
         "win_rate": "0.00%",
         "gross_pnl_usdc": 0.0,  
-        "net_pnl_usdc": 0.0     
+        "net_pnl_usdc": 0.0,
+        "wallet_balance_usdc": 1000.00  # ✨ NEW: Initial Paper Trading Balance
     },
     "trade_logs": []
 }
@@ -43,7 +43,6 @@ RISK_SETTINGS = {
     "atrStopMultiplier": 2.0,     
     "atrProfitMultiplier": 4.0,   
     "breakevenMultiplier": 2.0,   
-    # JUPITER DEX SIMULATION: Flat open/close position fee (approx 0.06%)
     "takerFeePerc": 0.0006,       
     "makerFeePerc": 0.0006,      
     "riskPct": 0.01               
@@ -58,28 +57,16 @@ input_name = session.get_inputs()[0].name
 label_name = session.get_outputs()[0].name
 prob_name = session.get_outputs()[1].name
 
-# Pyth Oracle Proxy: Using Coinbase for live paper-trade pricing data 
-# Since arbitrage keeps CEX and on-chain Oracle prices nearly identical
 exchange = ccxt.coinbase({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'}
 })
 SYMBOL = 'SOL/USDC'
 
-# ==============================================================================
-# 🔮 FUTURE WEB3 INTEGRATION BLOCK (JUPITER PERPS ON SOLANA)
-# When you transition to live money, replace the print statement below with 
-# your Solana private keypair, RPC connection, and Jupiter SDK execution logic.
-# ==============================================================================
 def execute_jupiter_transaction(direction, size_sol, price, sl, tp):
-    """
-    PAPER TRADING MODE: Simulates the on-chain interaction. 
-    Returns True to authorize the local state manager to track the paper trade.
-    """
     action = "LONG" if direction == 1.0 else "SHORT"
     log_msg = f"🔗 [WEB3 SIMULATION] Broadcasting {action} of {size_sol} SOL to Jupiter Perps..."
     print(log_msg)
-    # Return True simulates a successful on-chain transaction confirmation
     return True 
 
 def fetch_and_engineer_features():
@@ -217,6 +204,8 @@ def trading_loop():
                 
                 STATE["performance"]["total_trades"] += 1
                 STATE["performance"]["net_pnl_usdc"] += net_pnl
+                # ✨ NEW: Apply the PNL result to the tracked paper wallet balance
+                STATE["performance"]["wallet_balance_usdc"] += net_pnl
                 
                 if net_pnl > 0:
                     STATE["performance"]["wins"] += 1
@@ -229,7 +218,7 @@ def trading_loop():
                 calc_wr = (STATE["performance"]["wins"] / STATE["performance"]["total_trades"]) * 100
                 STATE["performance"]["win_rate"] = f"{calc_wr:.2f}%"
                 
-                settle_msg = f"📊 [SETTLED] Trade from {pos['timestamp']} Closed @ {exit_price} | {outcome_str} | Net PNL: {net_pnl:+.4f} USDC"
+                settle_msg = f"📊 [SETTLED] Trade Closed @ {exit_price} | Net PNL: {net_pnl:+.4f} USDC | New Balance: {STATE['performance']['wallet_balance_usdc']:.4f} USDC"
                 print(settle_msg)
                 STATE["trade_logs"].append(settle_msg)
                 STATE["active_trade"] = None 
@@ -263,7 +252,6 @@ def trading_loop():
                     sl_target = entry_p + stop_loss_distance
                     tp_target = entry_p - (pricing["atr"] * RISK_SETTINGS["atrProfitMultiplier"])
                     
-                # The execution stub intercepts the logic before assigning the trade to state
                 tx_confirmed = execute_jupiter_transaction(direction_intent, contract_size, entry_p, sl_target, tp_target)
                 
                 if tx_confirmed:
@@ -290,7 +278,7 @@ def trading_loop():
                         "direction": direction_intent
                     }
                 
-            log_msg = f"🕒 [{meta}] Veto Engine Conviction Prob: {prob_win:.2%} (Target: {threshold_value:.2%}) | Action: {decision_msg}"
+            log_msg = f"🕒 [{meta}] Conviction: {prob_win:.2%} (Target: {threshold_value:.2%}) | Action: {decision_msg}"
             print(log_msg)
             STATE["trade_logs"].append(log_msg)
             
@@ -299,16 +287,8 @@ def trading_loop():
 
 threading.Thread(target=trading_loop, daemon=True).start()
 
-# ==============================================================================
-# 🌐 API & DASHBOARD ROUTES
-# ==============================================================================
-
 @app.post("/api/override/close")
 def manual_close_position():
-    """
-    MANUAL OVERRIDE: Prematurely settles an active trade at the last known close price,
-    updates performance metrics, and clears the position state safely.
-    """
     if STATE["active_trade"] is None:
         return {"status": "error", "message": "No active position found to close."}
     
@@ -328,6 +308,8 @@ def manual_close_position():
     
     STATE["performance"]["total_trades"] += 1
     STATE["performance"]["net_pnl_usdc"] += net_pnl
+    # ✨ NEW: Apply manual override PNL to wallet balance
+    STATE["performance"]["wallet_balance_usdc"] += net_pnl
     
     if net_pnl > 0:
         STATE["performance"]["wins"] += 1
@@ -340,7 +322,7 @@ def manual_close_position():
     calc_wr = (STATE["performance"]["wins"] / STATE["performance"]["total_trades"]) * 100
     STATE["performance"]["win_rate"] = f"{calc_wr:.2f}%"
     
-    settle_msg = f"🕹️ [MANUAL OVERRIDE] Position from {pos['timestamp']} Force-Closed @ {exit_price} | {outcome_str} | Net PNL: {net_pnl:+.4f} USDC"
+    settle_msg = f"🕹️ [MANUAL OVERRIDE] Force-Closed @ {exit_price} | Net PNL: {net_pnl:+.4f} USDC | New Balance: {STATE['performance']['wallet_balance_usdc']:.4f} USDC"
     print(settle_msg)
     STATE["trade_logs"].append(settle_msg)
     
@@ -390,7 +372,8 @@ def get_bot_data():
             "total_trades": STATE["performance"]["total_trades"],
             "win_rate": STATE["performance"]["win_rate"],
             "gross_pnl_usdc": round(STATE["performance"]["gross_pnl_usdc"], 4),
-            "net_pnl_usdc": round(STATE["performance"]["net_pnl_usdc"], 4)
+            "net_pnl_usdc": round(STATE["performance"]["net_pnl_usdc"], 4),
+            "wallet_balance_usdc": round(STATE["performance"]["wallet_balance_usdc"], 4) # ✨ NEW: Exposes wallet balance to your frontend
         },
         "current_position": adjusted_position,
         "recent_activity_logs": STATE["trade_logs"][::-1]
@@ -398,7 +381,6 @@ def get_bot_data():
 
 @app.get("/")
 def serve_dashboard():
-    # Dynamically gets the absolute path of the directory main.py is living in
     current_dir = os.path.dirname(os.path.realpath(__file__))
     file_path = os.path.join(current_dir, "index.html")
     return FileResponse(file_path)
