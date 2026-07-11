@@ -10,3 +10,4 @@ uvicorn
 pydantic
 scikit-learn
 onnxruntime
+requests
