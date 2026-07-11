@@ -29,8 +29,8 @@ STATE = {
 # --- SYSTEM CONSTANTS & CONFIGURATIONS ---
 RISK_SETTINGS = {
     "atrStopMultiplier": 2.0,     
-    "atrProfitMultiplier": 2.0,   
-    "breakevenMultiplier": 5.0,   
+    "atrProfitMultiplier": 4.0,   # Synced to your JS backtester's 1:4 reward ratio
+    "breakevenMultiplier": 2.0,   # Synced to your JS backtester's 2.0 ATR trigger
     "takerFeePerc": 0.0010,       
     "makerFeePerc": 0.00095,      
     "riskPct": 0.01               
@@ -53,12 +53,13 @@ SYMBOL = 'SOL/USDC'
 
 def fetch_and_engineer_features():
     try:
-        candles = exchange.fetch_ohlcv(SYMBOL, timeframe='15m', limit=100)
+        candles = exchange.fetch_ohlcv(SYMBOL, timeframe='5m', limit=200)
         df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
-        adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
-        df['currentADX'] = adx_df['ADX_14']
-        df['prevADX'] = adx_df['ADX_14'].shift(1)
+        adx_df = ta.adx(df['high'], df['low'], df['close'], length=10)
+        df['currentADX'] = adx_df['ADX_10']
+        df['prevADX'] = adx_df['ADX_10'].shift(1)
+        
         df['rsi'] = ta.rsi(df['close'], length=14)
         df['rvol'] = df['volume'] / df['volume'].rolling(window=20).mean()
         
@@ -69,27 +70,46 @@ def fetch_and_engineer_features():
         df['lowerWick'] = df[['open', 'close']].min(axis=1) - df['low']
         df['upperWick'] = df['high'] - df[['open', 'close']].max(axis=1)
         
-        df['directionIntent'] = 1.0  
-        df['isWhipsaw'] = 0.0
+        # --- DYNAMIC DIRECTION INTENT ---
+        df['ema9'] = ta.ema(df['close'], length=9)
+        df['ema21'] = ta.ema(df['close'], length=21)
+        df['ema150'] = ta.ema(df['close'], length=150)
+
+        bull_fan = (df['ema9'] > df['ema21']) & (df['ema21'] > df['ema150'])
+        bear_fan = (df['ema9'] < df['ema21']) & (df['ema21'] < df['ema150'])
+
+        touches_long = (df['low'] <= df['ema9']) & (df['close'] > df['ema9'])
+        touches_short = (df['high'] >= df['ema9']) & (df['close'] < df['ema9'])
+
+        df['directionIntent'] = 0.0
+        df.loc[bull_fan & touches_long, 'directionIntent'] = 1.0
+        df.loc[bear_fan & touches_short, 'directionIntent'] = -1.0
+        
+        # --- DYNAMIC WHIPSAW ---
+        df['color'] = np.where(df['close'] >= df['open'], 1, -1)
+        df['flip'] = np.where(df['color'] != df['color'].shift(1), 1, 0)
+        df['isWhipsaw'] = np.where(df['flip'].rolling(window=3).sum() >= 3, 1.0, 0.0)
         
         live_row = df.iloc[-2]
         
         if live_row.isnull().any():
             return None, "Indicators warming up...", None, None
             
+        # ⚠️ CRITICAL: Replace these with your EXACT 6 pruned features in their correct training order
         feature_order = [
-            'rvol', 'rsi', 'currentADX', 'prevADX', 'atrPercentage', 
-            'bodySize', 'lowerWick', 'upperWick', 'directionIntent', 'isWhipsaw'
+            'directionIntent', 'rsi', 'rvol', 'atrPercentage', 'prevADX', 'bodySize'
         ]
         
-        input_vector = live_row[feature_order].values.astype(np.float32).reshape(1, 10)
+        # FIXED: Reshaped to exactly 6 columns to match your ONNX input shape [1, 6]
+        input_vector = live_row[feature_order].values.astype(np.float32).reshape(1, 6)
         timestamp_str = pd.to_datetime(live_row['timestamp'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
         
         pricing_data = {
             "close": float(live_row['close']),
             "high": float(live_row['high']),
             "low": float(live_row['low']),
-            "atr": float(atr.iloc[-2])
+            "atr": float(atr.iloc[-2]),
+            "direction_intent": float(live_row['directionIntent']) # Stored safely outside of the feature vector
         }
         
         return input_vector, timestamp_str, pricing_data, live_row.to_dict()
@@ -98,11 +118,11 @@ def fetch_and_engineer_features():
         return None, f"Data fetch error: {str(e)}", None, None
 
 def trading_loop():
-    print("🍰 UpsideDownCake 24/7 Production Engine Running Safely...")
+    print("🍰 UpsideDownCake 24/7 Production Engine Running Safely on 5m...")
     
     while True:
         current_time = time.time()
-        time_to_next_candle = 900 - (current_time % 900)
+        time_to_next_candle = 300 - (current_time % 300)
         time.sleep(time_to_next_candle + 3) 
         
         features, meta, pricing, raw_row = fetch_and_engineer_features()
@@ -191,13 +211,22 @@ def trading_loop():
         if STATE["active_trade"] is None:
             pred_label, pred_prob = session.run([label_name, prob_name], {input_name: features})
             
-            label = int(pred_label[0])
             prob_win = float(pred_prob[0][1])
-            direction_intent = float(features[0][8])
+            direction_intent = pricing["direction_intent"] # FIXED: Avoids array index mapping problems
+            
+            # FIXED: Dynamically load threshold from veto_threshold.txt just like your JS script
+            threshold_value = 0.50
+            if os.path.exists('veto_threshold.txt'):
+                try:
+                    with open('veto_threshold.txt', 'r') as f:
+                        threshold_value = float(f.read().strip())
+                except Exception:
+                    pass # Fallback to 0.50 if file reading encounters an issue
             
             direction_str = "LONG 📈" if direction_intent == 1.0 else "SHORT 📉"
             
-            if label == 1:
+            # FIXED: Approve trade based on custom threshold condition rather than raw argmax label
+            if prob_win >= threshold_value and direction_intent != 0.0:
                 stop_loss_distance = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
                 contract_size = 0.75
                 entry_p = pricing["close"]
@@ -220,14 +249,17 @@ def trading_loop():
                 }
                 decision_msg = f"✅ ALLOWED ({direction_str} entry of {contract_size} SOL @ {entry_p})"
             else:
-                decision_msg = "❌ VETO (Conditions blocked by XGBoost filter layer)"
-                STATE["skipped_trade"] = {
-                    "timestamp": meta,
-                    "entry_price": pricing["close"],
-                    "direction": direction_intent
-                }
+                action_reason = "Conditions blocked by XGBoost filter layer" if direction_intent != 0.0 else "No structural EMA trend setup"
+                decision_msg = f"❌ VETO ({action_reason})"
                 
-            log_msg = f"🕒 [{meta}] Veto Engine Conviction Prob: {prob_win:.2%} | Action: {decision_msg}"
+                if direction_intent != 0.0:
+                    STATE["skipped_trade"] = {
+                        "timestamp": meta,
+                        "entry_price": pricing["close"],
+                        "direction": direction_intent
+                    }
+                
+            log_msg = f"🕒 [{meta}] Veto Engine Conviction Prob: {prob_win:.2%} (Target: {threshold_value:.2%}) | Action: {decision_msg}"
             print(log_msg)
             STATE["trade_logs"].append(log_msg)
             
@@ -251,7 +283,6 @@ def health_and_dashboard():
         
         dir_str = "LONG 📈" if pos["direction"] == 1.0 else "SHORT 📉"
         
-        # Calculate distance to targets
         if pos["direction"] == 1.0:
             sl_dist = curr_p - sl_p
             tp_dist = tp_p - curr_p
