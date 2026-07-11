@@ -13,7 +13,7 @@ app = FastAPI()
 # --- HIGH-PERFORMANCE PRO-MODE THREAD-SAFE GLOBAL STATE ---
 STATE = {
     "active_trade": None,  
-    "skipped_trade": None,  # Tracks Vetoed trades to evaluate ghost win/loss outcomes
+    "skipped_trade": None, 
     "last_close_price": 0.0,
     "performance": {
         "wins": 0,
@@ -29,10 +29,11 @@ STATE = {
 # --- SYSTEM CONSTANTS & CONFIGURATIONS ---
 RISK_SETTINGS = {
     "atrStopMultiplier": 2.0,     
-    "atrProfitMultiplier": 4.0,   # Synced to your JS backtester's 1:4 reward ratio
-    "breakevenMultiplier": 2.0,   # Synced to your JS backtester's 2.0 ATR trigger
-    "takerFeePerc": 0.0010,       
-    "makerFeePerc": 0.00095,      
+    "atrProfitMultiplier": 4.0,   
+    "breakevenMultiplier": 2.0,   
+    # JUPITER DEX SIMULATION: Flat open/close position fee (approx 0.06%)
+    "takerFeePerc": 0.0006,       
+    "makerFeePerc": 0.0006,      
     "riskPct": 0.01               
 }
 
@@ -45,11 +46,29 @@ input_name = session.get_inputs()[0].name
 label_name = session.get_outputs()[0].name
 prob_name = session.get_outputs()[1].name
 
+# Pyth Oracle Proxy: Using Coinbase for live paper-trade pricing data 
+# Since arbitrage keeps CEX and on-chain Oracle prices nearly identical
 exchange = ccxt.coinbase({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'}
 })
 SYMBOL = 'SOL/USDC'
+
+# ==============================================================================
+# 🔮 FUTURE WEB3 INTEGRATION BLOCK (JUPITER PERPS ON SOLANA)
+# When you transition to live money, replace the print statement below with 
+# your Solana private keypair, RPC connection, and Jupiter SDK execution logic.
+# ==============================================================================
+def execute_jupiter_transaction(direction, size_sol, price, sl, tp):
+    """
+    PAPER TRADING MODE: Simulates the on-chain interaction. 
+    Returns True to authorize the local state manager to track the paper trade.
+    """
+    action = "LONG" if direction == 1.0 else "SHORT"
+    log_msg = f"🔗 [WEB3 SIMULATION] Broadcasting {action} of {size_sol} SOL to Jupiter Perps..."
+    print(log_msg)
+    # Return True simulates a successful on-chain transaction confirmation
+    return True 
 
 def fetch_and_engineer_features():
     try:
@@ -70,7 +89,6 @@ def fetch_and_engineer_features():
         df['lowerWick'] = df[['open', 'close']].min(axis=1) - df['low']
         df['upperWick'] = df['high'] - df[['open', 'close']].max(axis=1)
         
-        # --- DYNAMIC DIRECTION INTENT ---
         df['ema9'] = ta.ema(df['close'], length=9)
         df['ema21'] = ta.ema(df['close'], length=21)
         df['ema150'] = ta.ema(df['close'], length=150)
@@ -85,7 +103,6 @@ def fetch_and_engineer_features():
         df.loc[bull_fan & touches_long, 'directionIntent'] = 1.0
         df.loc[bear_fan & touches_short, 'directionIntent'] = -1.0
         
-        # --- DYNAMIC WHIPSAW ---
         df['color'] = np.where(df['close'] >= df['open'], 1, -1)
         df['flip'] = np.where(df['color'] != df['color'].shift(1), 1, 0)
         df['isWhipsaw'] = np.where(df['flip'].rolling(window=3).sum() >= 3, 1.0, 0.0)
@@ -95,7 +112,6 @@ def fetch_and_engineer_features():
         if live_row.isnull().any():
             return None, "Indicators warming up...", None, None
             
-        # FIXED: Sorted exactly according to your XGBoost training feature importance list
         feature_order = [
             'directionIntent', 'rsi', 'rvol', 'atrPercentage', 'prevADX', 'bodySize'
         ]
@@ -117,7 +133,7 @@ def fetch_and_engineer_features():
         return None, f"Data fetch error: {str(e)}", None, None
 
 def trading_loop():
-    print("🍰 UpsideDownCake 24/7 Production Engine Running Safely on 5m...")
+    print("🍰 UpsideDownCake Jupiter Paper Trading Engine Running...")
     
     while True:
         current_time = time.time()
@@ -130,7 +146,7 @@ def trading_loop():
             
         STATE["last_close_price"] = pricing["close"]
             
-        # 1. EVALUATE GHOST OUTCOMES FOR SKIPPED TRADES
+        # 1. EVALUATE GHOST OUTCOMES
         if STATE["skipped_trade"] is not None:
             skip_pos = STATE["skipped_trade"]
             if skip_pos["direction"] == 1.0 and pricing["close"] > skip_pos["entry_price"]:
@@ -235,16 +251,22 @@ def trading_loop():
                     sl_target = entry_p + stop_loss_distance
                     tp_target = entry_p - (pricing["atr"] * RISK_SETTINGS["atrProfitMultiplier"])
                     
-                STATE["active_trade"] = {
-                    "entry_price": entry_p,
-                    "direction": direction_intent,
-                    "timestamp": meta,
-                    "contract_size": contract_size,
-                    "sl": sl_target,
-                    "tp": tp_target,
-                    "atr": pricing["atr"]
-                }
-                decision_msg = f"✅ ALLOWED ({direction_str} entry of {contract_size} SOL @ {entry_p})"
+                # The execution stub intercepts the logic before assigning the trade to state
+                tx_confirmed = execute_jupiter_transaction(direction_intent, contract_size, entry_p, sl_target, tp_target)
+                
+                if tx_confirmed:
+                    STATE["active_trade"] = {
+                        "entry_price": entry_p,
+                        "direction": direction_intent,
+                        "timestamp": meta,
+                        "contract_size": contract_size,
+                        "sl": sl_target,
+                        "tp": tp_target,
+                        "atr": pricing["atr"]
+                    }
+                    decision_msg = f"✅ ALLOWED & EXECUTED ({direction_str} entry of {contract_size} SOL @ {entry_p})"
+                else:
+                    decision_msg = f"⚠️ ALLOWED BY MODEL BUT ON-CHAIN EXECUTION FAILED"
             else:
                 action_reason = "Conditions blocked by XGBoost filter layer" if direction_intent != 0.0 else "No structural EMA trend setup"
                 decision_msg = f"❌ VETO ({action_reason})"
@@ -300,7 +322,7 @@ def health_and_dashboard():
         
     return {
         "status": "online",
-        "market": "SOL-PERP (Coinbase-Pro-Context)",
+        "market": "SOL-PERP (Jupiter-DEX-Paper-Context)",
         "live_metrics": {
             "wins": STATE["performance"]["wins"],
             "losses": STATE["performance"]["losses"],
