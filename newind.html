@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UpsideDownCake | Solana Perps</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --border: #334155;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--success);
+            margin-right: 8px;
+            box-shadow: 0 0 8px var(--success);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background-color: var(--panel-bg);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        .card h2 {
+            margin-top: 0;
+            font-size: 1.2rem;
+            color: var(--accent);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+        .metric span:last-child {
+            font-weight: bold;
+        }
+        .positive { color: var(--success); }
+        .negative { color: var(--danger); }
+        
+        .log-container {
+            background-color: #020617;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .log-entry { margin-bottom: 8px; border-bottom: 1px solid #1e293b; padding-bottom: 4px;}
+        .log-time { color: var(--text-muted); }
+        .log-veto { color: #f59e0b; }
+        .log-action { color: var(--accent); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <div>
+            <h1 style="margin: 0;">🤖 Veto Engine Dashboard</h1>
+            <p style="margin: 5px 0 0 0; color: var(--text-muted);" id="market-name">Loading Market Data...</p>
+        </div>
+        <div>
+            <span class="status-indicator" id="pulse"></span>
+            <span id="system-status">Connecting...</span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h2>Live Performance</h2>
+            <div class="metric"><span>Win Rate:</span> <span id="win-rate">0.00%</span></div>
+            <div class="metric"><span>Total Trades:</span> <span id="total-trades">0</span></div>
+            <div class="metric"><span>Wins / Losses:</span> <span id="win-loss">0 / 0</span></div>
+            <div class="metric" style="margin-top: 20px;"><span>Gross PnL (USDC):</span> <span id="gross-pnl">0.00</span></div>
+            <div class="metric"><span>Net PnL (USDC):</span> <span id="net-pnl">0.00</span></div>
+        </div>
+
+        <div class="card">
+            <h2>Current Position</h2>
+            <div id="position-container">
+                <div style="color: var(--text-muted); text-align: center; margin-top: 40px;">No Active Position</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Brain Activity & Execution Logs</h2>
+        <div class="log-container" id="log-container">
+            <div style="color: var(--text-muted);">Awaiting engine pulses...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- CONFIGURATION ---
+    // Change this to your Render URL if running locally, or leave as '/' if hosted together.
+    const API_URL = "/api/data"; 
+    const POLL_INTERVAL = 5000; // 5 seconds
+
+    async function fetchDashboardData() {
+        try {
+            const response = await fetch(API_URL);
+            if (!response.ok) throw new Error("Network response was not ok");
+            const data = await response.json();
+            updateUI(data);
+            
+            // Pulse animation for connection status
+            document.getElementById('pulse').style.opacity = 1;
+            setTimeout(() => document.getElementById('pulse').style.opacity = 0.3, 500);
+            document.getElementById('system-status').innerText = `Online (Updated ${new Date().toLocaleTimeString()})`;
+            
+        } catch (error) {
+            console.error("Fetch error:", error);
+            document.getElementById('system-status').innerText = "Connection Lost";
+            document.getElementById('pulse').style.backgroundColor = "var(--danger)";
+        }
+    }
+
+    function updateUI(data) {
+        // 1. Headers
+        document.getElementById('market-name').innerText = data.market;
+
+        // 2. Metrics
+        const metrics = data.live_metrics;
+        document.getElementById('win-rate').innerText = metrics.win_rate;
+        document.getElementById('total-trades').innerText = metrics.total_trades;
+        document.getElementById('win-loss').innerText = `${metrics.wins} / ${metrics.losses}`;
+        
+        const grossEl = document.getElementById('gross-pnl');
+        grossEl.innerText = metrics.gross_pnl_usdc.toFixed(4);
+        grossEl.className = metrics.gross_pnl_usdc >= 0 ? 'positive' : 'negative';
+        
+        const netEl = document.getElementById('net-pnl');
+        netEl.innerText = metrics.net_pnl_usdc.toFixed(4);
+        netEl.className = metrics.net_pnl_usdc >= 0 ? 'positive' : 'negative';
+
+        // 3. Active Position
+        const posContainer = document.getElementById('position-container');
+        if (data.current_position) {
+            const pos = data.current_position;
+            const pnlColor = parseFloat(pos.distance_to_tp) > 0 ? 'positive' : 'negative'; // Example logic
+            
+            posContainer.innerHTML = `
+                <div class="metric"><span>Direction:</span> <span class="${pos.type.includes('LONG') ? 'positive' : 'negative'}">${pos.type}</span></div>
+                <div class="metric"><span>Size:</span> <span>${pos.bet_size}</span></div>
+                <div class="metric" style="margin-top:15px;"><span>Entry Price:</span> <span>$${pos.entry_price.toFixed(4)}</span></div>
+                <div class="metric"><span>Current Price:</span> <span>$${pos.current_price.toFixed(4)}</span></div>
+                <div class="metric" style="margin-top:15px; border-top: 1px dashed var(--border); padding-top:10px;">
+                    <span style="color: var(--danger)">Stop Loss:</span> <span>$${pos.stop_loss.toFixed(4)} (${pos.distance_to_sl})</span>
+                </div>
+                <div class="metric">
+                    <span style="color: var(--success)">Take Profit:</span> <span>$${pos.take_profit.toFixed(4)} (${pos.distance_to_tp})</span>
+                </div>
+            `;
+        } else {
+            posContainer.innerHTML = `<div style="color: var(--text-muted); text-align: center; margin-top: 40px;">No Active Position</div>`;
+        }
+
+        // 4. Activity Logs (The "Thinking" part)
+        const logContainer = document.getElementById('log-container');
+        if (data.recent_activity_logs && data.recent_activity_logs.length > 0) {
+            logContainer.innerHTML = ''; // Clear out old
+            
+            data.recent_activity_logs.forEach(log => {
+                // Colorize based on content for readability
+                let htmlLog = log;
+                if (log.includes("Veto Engine Conviction Prob")) {
+                    htmlLog = `<span class="log-veto">🧠 ${log}</span>`;
+                } else if (log.includes("ALLOWED & EXECUTED")) {
+                    htmlLog = `<span style="color: var(--success); font-weight:bold;">${log}</span>`;
+                } else if (log.includes("VETO")) {
+                    htmlLog = `<span style="color: var(--danger);">${log}</span>`;
+                } else if (log.includes("[SETTLED]")) {
+                    htmlLog = `<span style="color: var(--accent);">${log}</span>`;
+                }
+                
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry';
+                logEntry.innerHTML = htmlLog;
+                logContainer.appendChild(logEntry);
+            });
+        }
+    }
+
+    // Initialize
+    fetchDashboardData();
+    setInterval(fetchDashboardData, POLL_INTERVAL);
+</script>
+
+</body>
+</html>
