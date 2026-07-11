@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import requests
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
@@ -33,7 +34,7 @@ STATE = {
         "win_rate": "0.00%",
         "gross_pnl_usdc": 0.0,  
         "net_pnl_usdc": 0.0,
-        "wallet_balance_usdc": 1000.00  # ✨ NEW: Initial Paper Trading Balance
+        "wallet_balance_usdc": 1000.00  # Initial Paper Trading Balance
     },
     "trade_logs": []
 }
@@ -48,14 +49,21 @@ RISK_SETTINGS = {
     "riskPct": 0.01               
 }
 
+# --- WEB3 INTEGRATION FLAG ---
+# Set this to True ONLY when you have added your private key and RPC logic below
+LIVE_WEB3_MODE = False
+
 # --- ENGINE MODEL INITIALIZATION ---
 MODEL_PATH = "veto_engine.onnx"
 
 print(f"🤖 Initializing Inference Engine using file: {MODEL_PATH}")
-session = ort.InferenceSession(MODEL_PATH)
-input_name = session.get_inputs()[0].name
-label_name = session.get_outputs()[0].name
-prob_name = session.get_outputs()[1].name
+try:
+    session = ort.InferenceSession(MODEL_PATH)
+    input_name = session.get_inputs()[0].name
+    label_name = session.get_outputs()[0].name
+    prob_name = session.get_outputs()[1].name
+except Exception as e:
+    print(f"⚠️ Warning: Could not load {MODEL_PATH}. Ensure the file exists. Error: {e}")
 
 exchange = ccxt.coinbase({
     'enableRateLimit': True,
@@ -63,13 +71,50 @@ exchange = ccxt.coinbase({
 })
 SYMBOL = 'SOL/USDC'
 
+# ==============================================================================
+# 🔮 HYBRID PRICING & WEB3 EXECUTION
+# ==============================================================================
+
+def get_jupiter_live_price():
+    """
+    Fetches the exact, real-time SOL price directly from the Jupiter Price API.
+    Used for precision execution and PnL tracking, overriding CEX pricing.
+    """
+    try:
+        sol_mint = "So11111111111111111111111111111111111111112"
+        url = f"https://api.jup.ag/price/v2?ids={sol_mint}"
+        
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            json_data = response.json()
+            price_str = json_data["data"][sol_mint]["price"]
+            return float(price_str)
+    except Exception as e:
+        print(f"⚠️ Failed to fetch Jupiter Price API: {e}")
+    return None
+
 def execute_jupiter_transaction(direction, size_sol, price, sl, tp):
+    """
+    Handles trade execution. Currently defaults to PAPER TRADING simulation.
+    """
     action = "LONG" if direction == 1.0 else "SHORT"
-    log_msg = f"🔗 [WEB3 SIMULATION] Broadcasting {action} of {size_sol} SOL to Jupiter Perps..."
-    print(log_msg)
-    return True 
+    
+    if LIVE_WEB3_MODE:
+        # TODO: Insert real Jupiter SDK or Solana web3.py logic here
+        # e.g., build transaction, sign with Keypair, send to RPC
+        log_msg = f"🔥 [LIVE WEB3] Broadcasting REAL {action} of {size_sol} SOL to Jupiter..."
+        print(log_msg)
+        return True 
+    else:
+        # Paper trading mode
+        log_msg = f"🔗 [PAPER TRADE SIMULATION] Broadcasting {action} of {size_sol} SOL to Jupiter Perps..."
+        print(log_msg)
+        return True 
 
 def fetch_and_engineer_features():
+    """
+    Pulls historical data from Coinbase for clean, fast indicator generation.
+    """
     try:
         candles = exchange.fetch_ohlcv(SYMBOL, timeframe='5m', limit=200)
         df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -132,7 +177,7 @@ def fetch_and_engineer_features():
         return None, f"Data fetch error: {str(e)}", None, None
 
 def trading_loop():
-    print("🍰 UpsideDownCake Jupiter Paper Trading Engine Running...")
+    print("🍰 UpsideDownCake Jupiter Engine Running...")
     
     while True:
         current_time = time.time()
@@ -143,6 +188,15 @@ def trading_loop():
         if features is None:
             continue
             
+        # --- HYBRID PRICING OVERRIDE ---
+        # Overwrite Coinbase close price with actual Jupiter Oracle price for precise execution
+        jup_price = get_jupiter_live_price()
+        if jup_price is not None:
+            pricing["close"] = jup_price
+            # Widen the high/low slightly if Jupiter price breaches the Coinbase candle bounds
+            pricing["high"] = max(pricing["high"], jup_price)
+            pricing["low"] = min(pricing["low"], jup_price)
+
         STATE["last_close_price"] = pricing["close"]
             
         # 1. EVALUATE GHOST OUTCOMES
@@ -204,7 +258,6 @@ def trading_loop():
                 
                 STATE["performance"]["total_trades"] += 1
                 STATE["performance"]["net_pnl_usdc"] += net_pnl
-                # ✨ NEW: Apply the PNL result to the tracked paper wallet balance
                 STATE["performance"]["wallet_balance_usdc"] += net_pnl
                 
                 if net_pnl > 0:
@@ -225,9 +278,13 @@ def trading_loop():
                 
         # 3. RUN INFERENCE FOR NEW SETUP ENTRIES
         if STATE["active_trade"] is None:
-            pred_label, pred_prob = session.run([label_name, prob_name], {input_name: features})
+            try:
+                pred_label, pred_prob = session.run([label_name, prob_name], {input_name: features})
+                prob_win = float(pred_prob[0][1])
+            except Exception as e:
+                print(f"⚠️ Inference Error: {e}")
+                continue
             
-            prob_win = float(pred_prob[0][1])
             direction_intent = pricing["direction_intent"] 
             
             threshold_value = 0.50
@@ -287,6 +344,10 @@ def trading_loop():
 
 threading.Thread(target=trading_loop, daemon=True).start()
 
+# ==============================================================================
+# 🌐 API & DASHBOARD ROUTES
+# ==============================================================================
+
 @app.post("/api/override/close")
 def manual_close_position():
     if STATE["active_trade"] is None:
@@ -308,7 +369,6 @@ def manual_close_position():
     
     STATE["performance"]["total_trades"] += 1
     STATE["performance"]["net_pnl_usdc"] += net_pnl
-    # ✨ NEW: Apply manual override PNL to wallet balance
     STATE["performance"]["wallet_balance_usdc"] += net_pnl
     
     if net_pnl > 0:
@@ -365,7 +425,7 @@ def get_bot_data():
         
     return {
         "status": "online",
-        "market": "SOL-PERP (Jupiter-DEX-Paper-Context)",
+        "market": "SOL-PERP (Jupiter Hybrid Oracle)",
         "live_metrics": {
             "wins": STATE["performance"]["wins"],
             "losses": STATE["performance"]["losses"],
@@ -373,7 +433,7 @@ def get_bot_data():
             "win_rate": STATE["performance"]["win_rate"],
             "gross_pnl_usdc": round(STATE["performance"]["gross_pnl_usdc"], 4),
             "net_pnl_usdc": round(STATE["performance"]["net_pnl_usdc"], 4),
-            "wallet_balance_usdc": round(STATE["performance"]["wallet_balance_usdc"], 4) # ✨ NEW: Exposes wallet balance to your frontend
+            "wallet_balance_usdc": round(STATE["performance"]["wallet_balance_usdc"], 4)
         },
         "current_position": adjusted_position,
         "recent_activity_logs": STATE["trade_logs"][::-1]
