@@ -1,7 +1,11 @@
-fastapi
-uvicorn
-onnxruntime
 numpy
 pandas
 pandas-ta
 ccxt
+tensorflow-cpu
+xgboost
+supabase
+fastapi
+uvicorn
+pydantic
+scikit-learn
