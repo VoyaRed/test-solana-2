@@ -7,6 +7,8 @@ import pandas_ta as ta
 import onnxruntime as ort
 import ccxt
 from fastapi import FastAPI
+from fastapi.responses import FileResponse 
+
 
 app = FastAPI()
 
@@ -287,8 +289,9 @@ def trading_loop():
 
 threading.Thread(target=trading_loop, daemon=True).start()
 
-@app.api_route("/", methods=["GET", "HEAD"])
-def health_and_dashboard():
+# --- API ENDPOINT (Serves the raw JSON data) ---
+@app.api_route("/api/data", methods=["GET", "HEAD"])
+def get_bot_data():
     adjusted_position = None
     if STATE["active_trade"] is not None:
         pos = STATE["active_trade"]
@@ -334,3 +337,9 @@ def health_and_dashboard():
         "current_position": adjusted_position,
         "recent_activity_logs": STATE["trade_logs"][::-1]
     }
+
+# --- FRONTEND ENDPOINT (Serves the Visual Dashboard) ---
+@app.get("/")
+def serve_dashboard():
+    # This automatically reads index.html and serves it to the browser
+    return FileResponse("index.html")
