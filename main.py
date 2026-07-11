@@ -95,12 +95,11 @@ def fetch_and_engineer_features():
         if live_row.isnull().any():
             return None, "Indicators warming up...", None, None
             
-        # ⚠️ CRITICAL: Replace these with your EXACT 6 pruned features in their correct training order
+        # FIXED: Sorted exactly according to your XGBoost training feature importance list
         feature_order = [
             'directionIntent', 'rsi', 'rvol', 'atrPercentage', 'prevADX', 'bodySize'
         ]
         
-        # FIXED: Reshaped to exactly 6 columns to match your ONNX input shape [1, 6]
         input_vector = live_row[feature_order].values.astype(np.float32).reshape(1, 6)
         timestamp_str = pd.to_datetime(live_row['timestamp'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
         
@@ -109,7 +108,7 @@ def fetch_and_engineer_features():
             "high": float(live_row['high']),
             "low": float(live_row['low']),
             "atr": float(atr.iloc[-2]),
-            "direction_intent": float(live_row['directionIntent']) # Stored safely outside of the feature vector
+            "direction_intent": float(live_row['directionIntent']) 
         }
         
         return input_vector, timestamp_str, pricing_data, live_row.to_dict()
@@ -212,20 +211,18 @@ def trading_loop():
             pred_label, pred_prob = session.run([label_name, prob_name], {input_name: features})
             
             prob_win = float(pred_prob[0][1])
-            direction_intent = pricing["direction_intent"] # FIXED: Avoids array index mapping problems
+            direction_intent = pricing["direction_intent"] 
             
-            # FIXED: Dynamically load threshold from veto_threshold.txt just like your JS script
             threshold_value = 0.50
             if os.path.exists('veto_threshold.txt'):
                 try:
                     with open('veto_threshold.txt', 'r') as f:
                         threshold_value = float(f.read().strip())
                 except Exception:
-                    pass # Fallback to 0.50 if file reading encounters an issue
+                    pass 
             
             direction_str = "LONG 📈" if direction_intent == 1.0 else "SHORT 📉"
             
-            # FIXED: Approve trade based on custom threshold condition rather than raw argmax label
             if prob_win >= threshold_value and direction_intent != 0.0:
                 stop_loss_distance = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
                 contract_size = 0.75
@@ -275,7 +272,6 @@ def health_and_dashboard():
         pos = STATE["active_trade"]
         curr_price = STATE["last_close_price"]
         
-        # System Price Offset Sync Correction
         entry_p = round(pos["entry_price"] - 1.0, 4)
         sl_p = round(pos["sl"] - 1.0, 4)
         tp_p = round(pos["tp"] - 1.0, 4)
