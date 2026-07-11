@@ -23,7 +23,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         .header {
@@ -54,13 +54,25 @@
             padding: 20px;
             border-radius: 8px;
             border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
-        .card h2 {
+        .chart-card {
+            background-color: var(--panel-bg);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            margin-bottom: 20px;
+            height: 600px;
+        }
+        .card h2, .chart-card h2 {
             margin-top: 0;
             font-size: 1.2rem;
             color: var(--accent);
             border-bottom: 1px solid var(--border);
             padding-bottom: 10px;
+            margin-bottom: 15px;
         }
         .metric {
             display: flex;
@@ -74,6 +86,34 @@
         .positive { color: var(--success); }
         .negative { color: var(--danger); }
         
+        /* OVERRIDE BUTTON DESIGN */
+        .btn-danger {
+            background-color: var(--danger);
+            color: #ffffff;
+            border: none;
+            padding: 12px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1rem;
+            width: 100%;
+            margin-top: 15px;
+            transition: background 0.2s ease, transform 0.1s ease;
+            box-shadow: 0 4px 6px rgba(239, 68, 68, 0.2);
+        }
+        .btn-danger:hover {
+            background-color: #dc2626;
+        }
+        .btn-danger:active {
+            transform: scale(0.98);
+        }
+        .btn-danger:disabled {
+            background-color: var(--border);
+            color: var(--text-muted);
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        
         .log-container {
             background-color: #020617;
             padding: 15px;
@@ -86,9 +126,7 @@
             line-height: 1.5;
         }
         .log-entry { margin-bottom: 8px; border-bottom: 1px solid #1e293b; padding-bottom: 4px;}
-        .log-time { color: var(--text-muted); }
         .log-veto { color: #f59e0b; }
-        .log-action { color: var(--accent); }
     </style>
 </head>
 <body>
@@ -105,20 +143,55 @@
         </div>
     </div>
 
+    <div class="chart-card">
+        <h2>Live Market Context (SOL/USD)</h2>
+        <div class="tradingview-widget-container" style="height: 100%; width: 100%;">
+            <div id="tradingview_sol" style="height: calc(100% - 30px); width: 100%;"></div>
+            <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+            <script type="text/javascript">
+            new TradingView.widget({
+                "autosize": true,
+                "symbol": "COINBASE:SOLUSD", 
+                "interval": "5", 
+                "timezone": "Etc/UTC",
+                "theme": "dark",
+                "style": "1",
+                "locale": "en",
+                "enable_publishing": false,
+                "backgroundColor": "#1e293b", 
+                "gridColor": "#334155",
+                "hide_top_toolbar": false,
+                "hide_legend": false,
+                "save_image": false,
+                "container_id": "tradingview_sol",
+                "studies": [
+                    "ADX@tv-basicstudies",
+                    "RSI@tv-basicstudies",
+                    "ATR@tv-basicstudies"
+                ]
+            });
+            </script>
+        </div>
+    </div>
+
     <div class="grid">
         <div class="card">
-            <h2>Live Performance</h2>
-            <div class="metric"><span>Win Rate:</span> <span id="win-rate">0.00%</span></div>
-            <div class="metric"><span>Total Trades:</span> <span id="total-trades">0</span></div>
-            <div class="metric"><span>Wins / Losses:</span> <span id="win-loss">0 / 0</span></div>
-            <div class="metric" style="margin-top: 20px;"><span>Gross PnL (USDC):</span> <span id="gross-pnl">0.00</span></div>
-            <div class="metric"><span>Net PnL (USDC):</span> <span id="net-pnl">0.00</span></div>
+            <div>
+                <h2>Live Performance</h2>
+                <div class="metric"><span>Win Rate:</span> <span id="win-rate">0.00%</span></div>
+                <div class="metric"><span>Total Trades:</span> <span id="total-trades">0</span></div>
+                <div class="metric"><span>Wins / Losses:</span> <span id="win-loss">0 / 0</span></div>
+                <div class="metric" style="margin-top: 20px;"><span>Gross PnL (USDC):</span> <span id="gross-pnl">0.00</span></div>
+                <div class="metric"><span>Net PnL (USDC):</span> <span id="net-pnl">0.00</span></div>
+            </div>
         </div>
 
         <div class="card">
-            <h2>Current Position</h2>
-            <div id="position-container">
-                <div style="color: var(--text-muted); text-align: center; margin-top: 40px;">No Active Position</div>
+            <div>
+                <h2>Current Position</h2>
+                <div id="position-container">
+                    <div style="color: var(--text-muted); text-align: center; margin-top: 40px;">No Active Position</div>
+                </div>
             </div>
         </div>
     </div>
@@ -132,10 +205,8 @@
 </div>
 
 <script>
-    // --- CONFIGURATION ---
-    // Change this to your Render URL if running locally, or leave as '/' if hosted together.
     const API_URL = "/api/data"; 
-    const POLL_INTERVAL = 5000; // 5 seconds
+    const POLL_INTERVAL = 5000; 
 
     async function fetchDashboardData() {
         try {
@@ -144,7 +215,6 @@
             const data = await response.json();
             updateUI(data);
             
-            // Pulse animation for connection status
             document.getElementById('pulse').style.opacity = 1;
             setTimeout(() => document.getElementById('pulse').style.opacity = 0.3, 500);
             document.getElementById('system-status').innerText = `Online (Updated ${new Date().toLocaleTimeString()})`;
@@ -157,10 +227,8 @@
     }
 
     function updateUI(data) {
-        // 1. Headers
         document.getElementById('market-name').innerText = data.market;
 
-        // 2. Metrics
         const metrics = data.live_metrics;
         document.getElementById('win-rate').innerText = metrics.win_rate;
         document.getElementById('total-trades').innerText = metrics.total_trades;
@@ -174,11 +242,9 @@
         netEl.innerText = metrics.net_pnl_usdc.toFixed(4);
         netEl.className = metrics.net_pnl_usdc >= 0 ? 'positive' : 'negative';
 
-        // 3. Active Position
         const posContainer = document.getElementById('position-container');
         if (data.current_position) {
             const pos = data.current_position;
-            const pnlColor = parseFloat(pos.distance_to_tp) > 0 ? 'positive' : 'negative'; // Example logic
             
             posContainer.innerHTML = `
                 <div class="metric"><span>Direction:</span> <span class="${pos.type.includes('LONG') ? 'positive' : 'negative'}">${pos.type}</span></div>
@@ -191,18 +257,17 @@
                 <div class="metric">
                     <span style="color: var(--success)">Take Profit:</span> <span>$${pos.take_profit.toFixed(4)} (${pos.distance_to_tp})</span>
                 </div>
+                <button class="btn-danger" id="override-btn" onclick="forceClosePosition()">🛑 Force Close Position</button>
             `;
         } else {
             posContainer.innerHTML = `<div style="color: var(--text-muted); text-align: center; margin-top: 40px;">No Active Position</div>`;
         }
 
-        // 4. Activity Logs (The "Thinking" part)
         const logContainer = document.getElementById('log-container');
         if (data.recent_activity_logs && data.recent_activity_logs.length > 0) {
-            logContainer.innerHTML = ''; // Clear out old
+            logContainer.innerHTML = ''; 
             
             data.recent_activity_logs.forEach(log => {
-                // Colorize based on content for readability
                 let htmlLog = log;
                 if (log.includes("Veto Engine Conviction Prob")) {
                     htmlLog = `<span class="log-veto">🧠 ${log}</span>`;
@@ -210,7 +275,7 @@
                     htmlLog = `<span style="color: var(--success); font-weight:bold;">${log}</span>`;
                 } else if (log.includes("VETO")) {
                     htmlLog = `<span style="color: var(--danger);">${log}</span>`;
-                } else if (log.includes("[SETTLED]")) {
+                } else if (log.includes("[SETTLED]") || log.includes("[MANUAL OVERRIDE]")) {
                     htmlLog = `<span style="color: var(--accent);">${log}</span>`;
                 }
                 
@@ -222,7 +287,40 @@
         }
     }
 
-    // Initialize
+    // DISPATCH FUNCTION FOR OVERRIDE EXECUTION
+    async function forceClosePosition() {
+        const btn = document.getElementById('override-btn');
+        if (!confirm("CRITICAL OVERRIDE: Are you absolutely sure you want to force-market-close this live position?")) return;
+        
+        try {
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = "Broadcasting Exit Tx...";
+            }
+            
+            const response = await fetch("/api/override/close", { 
+                method: "POST",
+                headers: { "Content-Type": "application/json" }
+            });
+            const data = await response.json();
+            
+            if (data.status === "success") {
+                // Immediate refresh response loop to prevent UI lag
+                await fetchDashboardData();
+            } else {
+                alert(data.message);
+            }
+        } catch (error) {
+            console.error("Override Execution failed:", error);
+            alert("Network Error: Manual override signal could not reach server.");
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = "🛑 Force Close Position";
+            }
+        }
+    }
+
     fetchDashboardData();
     setInterval(fetchDashboardData, POLL_INTERVAL);
 </script>
