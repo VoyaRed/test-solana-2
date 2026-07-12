@@ -42,26 +42,30 @@ STATE = {
 # --- SYSTEM CONSTANTS & CONFIGURATIONS ---
 RISK_SETTINGS = {
     "atrStopMultiplier": 2.0,     
-    "atrProfitMultiplier": 4.0,   
+    "atrProfitMultiplier": 3.0,   # 🚀 OPTIMIZED: Matches your 1:1.5 Alpha config
     "breakevenMultiplier": 2.0,   
     "takerFeePerc": 0.0006,       
     "makerFeePerc": 0.0006,      
     "riskPct": 0.01               
 }
 
+# 🚀 ON-THE-FLY CONFIGURATION
+VETO_THRESHOLD = 0.50
+
 # --- WEB3 INTEGRATION FLAG ---
-# Set this to True ONLY when you have added your private key and RPC logic below
 LIVE_WEB3_MODE = False
 
 # --- ENGINE MODEL INITIALIZATION ---
-MODEL_PATH = "veto_engine.onnx"
+MODEL_PATH = "veto_engine_alpha.onnx"  # 🚀 UPDATED: Pointing to your alpha model
 
 print(f"🤖 Initializing Inference Engine using file: {MODEL_PATH}")
 try:
     session = ort.InferenceSession(MODEL_PATH)
     input_name = session.get_inputs()[0].name
     label_name = session.get_outputs()[0].name
-    prob_name = session.get_outputs()[1].name
+    # Handle both single-output or multi-output models depending on how ONNX serialized the probabilities
+    outputs = session.get_outputs()
+    prob_name = outputs[1].name if len(outputs) > 1 else outputs[0].name
 except Exception as e:
     print(f"⚠️ Warning: Could not load {MODEL_PATH}. Ensure the file exists. Error: {e}")
 
@@ -76,10 +80,6 @@ SYMBOL = 'SOL/USDC'
 # ==============================================================================
 
 def get_jupiter_live_price():
-    """
-    Fetches the exact, real-time SOL price directly from the Jupiter Price API.
-    Used for precision execution and PnL tracking, overriding CEX pricing.
-    """
     try:
         sol_mint = "So11111111111111111111111111111111111111112"
         url = f"https://api.jup.ag/price/v2?ids={sol_mint}"
@@ -94,40 +94,37 @@ def get_jupiter_live_price():
     return None
 
 def execute_jupiter_transaction(direction, size_sol, price, sl, tp):
-    """
-    Handles trade execution. Currently defaults to PAPER TRADING simulation.
-    """
     action = "LONG" if direction == 1.0 else "SHORT"
-    
     if LIVE_WEB3_MODE:
-        # TODO: Insert real Jupiter SDK or Solana web3.py logic here
-        # e.g., build transaction, sign with Keypair, send to RPC
         log_msg = f"🔥 [LIVE WEB3] Broadcasting REAL {action} of {size_sol} SOL to Jupiter..."
         print(log_msg)
         return True 
     else:
-        # Paper trading mode
         log_msg = f"🔗 [PAPER TRADE SIMULATION] Broadcasting {action} of {size_sol} SOL to Jupiter Perps..."
         print(log_msg)
         return True 
 
 def fetch_and_engineer_features():
-    """
-    Pulls historical data from Coinbase for clean, fast indicator generation.
-    """
+    global VETO_THRESHOLD
     try:
-        candles = exchange.fetch_ohlcv(SYMBOL, timeframe='5m', limit=200)
+        # 🚀 FIX: Increased limit from 200 to 1000 to allow the 600 EMA space to warm up
+        candles = exchange.fetch_ohlcv(SYMBOL, timeframe='5m', limit=1000)
         df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=10)
         df['currentADX'] = adx_df['ADX_10']
         df['prevADX'] = adx_df['ADX_10'].shift(1)
+        df['adxDelta'] = df['currentADX'] - df['prevADX']  # 🚀 ADDED Alpha Feature
         
         df['rsi'] = ta.rsi(df['close'], length=14)
         df['rvol'] = df['volume'] / df['volume'].rolling(window=20).mean()
         
         atr = ta.atr(df['high'], df['low'], df['close'], length=14)
         df['atrPercentage'] = (atr / df['close']) * 100
+        
+        # 🚀 ADDED Alpha Feature: 600 period HTF EMA distance tracking
+        df['ema600'] = ta.ema(df['close'], length=600)
+        df['distanceToHtfEma'] = ((df['close'] - df['ema600']) / df['ema600']) * 100
         
         df['bodySize'] = (df['close'] - df['open']).abs()
         df['lowerWick'] = df[['open', 'close']].min(axis=1) - df['low']
@@ -156,11 +153,13 @@ def fetch_and_engineer_features():
         if live_row.isnull().any():
             return None, "Indicators warming up...", None, None
             
+        # 🚀 MATCHES 10 FEATURES USED IN TRAINING_ALPHA
         feature_order = [
-            'directionIntent', 'rsi', 'rvol', 'atrPercentage', 'prevADX', 'bodySize'
+            'rsi', 'currentADX', 'adxDelta', 'rvol', 'atrPercentage', 
+            'distanceToHtfEma', 'upperWick', 'lowerWick', 'bodySize', 'isWhipsaw'
         ]
         
-        input_vector = live_row[feature_order].values.astype(np.float32).reshape(1, 6)
+        input_vector = live_row[feature_order].values.astype(np.float32).reshape(1, 10)
         timestamp_str = pd.to_datetime(live_row['timestamp'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
         
         pricing_data = {
@@ -177,6 +176,7 @@ def fetch_and_engineer_features():
         return None, f"Data fetch error: {str(e)}", None, None
 
 def trading_loop():
+    global VETO_THRESHOLD
     print("🍰 UpsideDownCake Jupiter Engine Running...")
     
     while True:
@@ -188,18 +188,14 @@ def trading_loop():
         if features is None:
             continue
             
-        # --- HYBRID PRICING OVERRIDE ---
-        # Overwrite Coinbase close price with actual Jupiter Oracle price for precise execution
         jup_price = get_jupiter_live_price()
         if jup_price is not None:
             pricing["close"] = jup_price
-            # Widen the high/low slightly if Jupiter price breaches the Coinbase candle bounds
             pricing["high"] = max(pricing["high"], jup_price)
             pricing["low"] = min(pricing["low"], jup_price)
 
         STATE["last_close_price"] = pricing["close"]
             
-        # 1. EVALUATE GHOST OUTCOMES
         if STATE["skipped_trade"] is not None:
             skip_pos = STATE["skipped_trade"]
             if skip_pos["direction"] == 1.0 and pricing["close"] > skip_pos["entry_price"]:
@@ -214,7 +210,6 @@ def trading_loop():
             STATE["trade_logs"].append(log_msg)
             STATE["skipped_trade"] = None
             
-        # 2. EVALUATE ACTIVE LIVE POSITION
         if STATE["active_trade"] is not None:
             pos = STATE["active_trade"]
             trade_closed = False
@@ -276,28 +271,24 @@ def trading_loop():
                 STATE["trade_logs"].append(settle_msg)
                 STATE["active_trade"] = None 
                 
-        # 3. RUN INFERENCE FOR NEW SETUP ENTRIES
         if STATE["active_trade"] is None:
-            try:
-                pred_label, pred_prob = session.run([label_name, prob_name], {input_name: features})
-                prob_win = float(pred_prob[0][1])
-            except Exception as e:
-                print(f"⚠️ Inference Error: {e}")
-                continue
+            direction_intent = pricing["direction_intent"]
             
-            direction_intent = pricing["direction_intent"] 
-            
-            threshold_value = 0.50
-            if os.path.exists('veto_threshold.txt'):
+            # Run model only if strategy structure signals an intent
+            if direction_intent != 0.0:
                 try:
-                    with open('veto_threshold.txt', 'r') as f:
-                        threshold_value = float(f.read().strip())
-                except Exception:
-                    pass 
+                    pred_res = session.run([label_name, prob_name], {input_name: features})
+                    # Handles structure differences across formatting outputs safely
+                    prob_win = float(pred_res[1][0][1]) if len(pred_res) > 1 else float(pred_res[0][0])
+                except Exception as e:
+                    print(f"⚠️ Inference Error: {e}")
+                    continue
+            else:
+                prob_win = 0.0
             
             direction_str = "LONG 📈" if direction_intent == 1.0 else "SHORT 📉"
             
-            if prob_win >= threshold_value and direction_intent != 0.0:
+            if direction_intent != 0.0 and prob_win >= VETO_THRESHOLD:
                 stop_loss_distance = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
                 contract_size = 0.75
                 entry_p = pricing["close"]
@@ -325,7 +316,7 @@ def trading_loop():
                 else:
                     decision_msg = f"⚠️ ALLOWED BY MODEL BUT ON-CHAIN EXECUTION FAILED"
             else:
-                action_reason = "Conditions blocked by XGBoost filter layer" if direction_intent != 0.0 else "No structural EMA trend setup"
+                action_reason = f"Model Conviction ({prob_win:.2%}) below Target" if direction_intent != 0.0 else "No structural EMA trend setup"
                 decision_msg = f"❌ VETO ({action_reason})"
                 
                 if direction_intent != 0.0:
@@ -334,10 +325,11 @@ def trading_loop():
                         "entry_price": pricing["close"],
                         "direction": direction_intent
                     }
-                
-            log_msg = f"🕒 [{meta}] Conviction: {prob_win:.2%} (Target: {threshold_value:.2%}) | Action: {decision_msg}"
-            print(log_msg)
-            STATE["trade_logs"].append(log_msg)
+            
+            if direction_intent != 0.0:
+                log_msg = f"🕒 [{meta}] Conviction: {prob_win:.2%} (Target: {VETO_THRESHOLD:.2%}) | Action: {decision_msg}"
+                print(log_msg)
+                STATE["trade_logs"].append(log_msg)
             
         if len(STATE["trade_logs"]) > 200:
             STATE["trade_logs"].pop(0)
@@ -347,6 +339,18 @@ threading.Thread(target=trading_loop, daemon=True).start()
 # ==============================================================================
 # 🌐 API & DASHBOARD ROUTES
 # ==============================================================================
+
+# 🚀 NEW: Dynamically update your model's threshold on the fly
+@app.post("/api/config/threshold")
+def update_threshold(val: float):
+    global VETO_THRESHOLD
+    if 0.0 <= val <= 1.0:
+        VETO_THRESHOLD = val
+        log_msg = f"🎛️ [CONFIG UPDATE] Veto threshold updated to {VETO_THRESHOLD:.2%}"
+        print(log_msg)
+        STATE["trade_logs"].append(log_msg)
+        return {"status": "success", "message": f"Threshold updated to {val}"}
+    return {"status": "error", "message": "Threshold must be between 0.0 and 1.0"}
 
 @app.post("/api/override/close")
 def manual_close_position():
@@ -374,10 +378,8 @@ def manual_close_position():
     if net_pnl > 0:
         STATE["performance"]["wins"] += 1
         STATE["performance"]["gross_pnl_usdc"] += net_pnl 
-        outcome_str = "🎉 MANUAL WIN"
     else:
         STATE["performance"]["losses"] += 1
-        outcome_str = "🛑 MANUAL LOSS"
         
     calc_wr = (STATE["performance"]["wins"] / STATE["performance"]["total_trades"]) * 100
     STATE["performance"]["win_rate"] = f"{calc_wr:.2f}%"
@@ -387,20 +389,20 @@ def manual_close_position():
     STATE["trade_logs"].append(settle_msg)
     
     STATE["active_trade"] = None
-    
     return {"status": "success", "message": f"Successfully market-closed position at ${exit_price}."}
 
 @app.api_route("/api/data", methods=["GET", "HEAD"])
 def get_bot_data():
+    global VETO_THRESHOLD
     adjusted_position = None
     if STATE["active_trade"] is not None:
         pos = STATE["active_trade"]
         curr_price = STATE["last_close_price"]
         
-        entry_p = round(pos["entry_price"] - 1.0, 4)
-        sl_p = round(pos["sl"] - 1.0, 4)
-        tp_p = round(pos["tp"] - 1.0, 4)
-        curr_p = round(curr_price - 1.0, 4)
+        entry_p = round(pos["entry_price"], 4)
+        sl_p = round(pos["sl"], 4)
+        tp_p = round(pos["tp"], 4)
+        curr_p = round(curr_price, 4)
         
         dir_str = "LONG 📈" if pos["direction"] == 1.0 else "SHORT 📉"
         
@@ -426,6 +428,7 @@ def get_bot_data():
     return {
         "status": "online",
         "market": "SOL-PERP (Jupiter Hybrid Oracle)",
+        "current_veto_threshold": f"{VETO_THRESHOLD:.2%}",
         "live_metrics": {
             "wins": STATE["performance"]["wins"],
             "losses": STATE["performance"]["losses"],
