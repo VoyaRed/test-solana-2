@@ -332,7 +332,7 @@ def trading_loop():
             
             if direction_intent != 0.0 and prob_win >= VETO_THRESHOLD:
                 stop_loss_distance = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
-                contract_size = 5
+                contract_size = 0.15
                 entry_p = pricing["close"]
                 
                 if direction_intent == 1.0:
