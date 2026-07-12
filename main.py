@@ -212,7 +212,7 @@ def trading_loop():
             first_run = False
         else:
             print(f"\n⏳ [DEBUG] Sleeping for {time_to_next_candle:.0f} seconds until next 5m candle close...")
-            time.sleep(time_to_next_candle + 3) 
+            time.sleep(time_to_next_candle + 15) 
         
         print("🔄 [DEBUG] Fetching exchange data and engineering 1500 candles...")
         features, meta, pricing, raw_row = fetch_and_engineer_features()
