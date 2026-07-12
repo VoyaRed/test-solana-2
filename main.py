@@ -219,7 +219,7 @@ def trading_loop():
         
         if features is None:
             print(f"⚠️ [DEBUG] Data fetch failed or warming up: {meta}")
-            time.sleep(10) # Short pause if data fetch fails
+            time.sleep(5) # Short pause if data fetch fails
             continue
             
         print(f"✅ [DEBUG] Data loaded! Timestamp: {meta} | Exchange Close: ${pricing['close']:.4f}")
