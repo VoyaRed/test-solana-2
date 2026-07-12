@@ -20,7 +20,6 @@
             --danger-bg: rgba(239, 68, 68, 0.1);
             --warning: #f59e0b;
             --font-main: 'Inter', sans-serif;
-            --font-mono: 'Courier New', Courier, monospace;
         }
 
         * {
@@ -30,595 +29,372 @@
         }
 
         body {
-            font-family: var(--font-main);
             background-color: var(--bg-color);
-            background-image: 
-                radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.05) 0px, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
-            background-attachment: fixed;
             color: var(--text-main);
+            font-family: var(--font-main);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
             min-height: 100vh;
-            padding: 20px;
-            overflow-x: hidden;
         }
 
-        /* Animations */
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes pulseGlow {
-            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-        }
-
-        @keyframes pulseWarn {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-            70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-        }
-
-        .animate-up {
-            animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            opacity: 0;
-        }
-        
-        .delay-1 { animation-delay: 0.1s; }
-        .delay-2 { animation-delay: 0.2s; }
-        .delay-3 { animation-delay: 0.3s; }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-
-        /* Header */
-        .header {
+        header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 20px 30px;
-            background: rgba(24, 24, 27, 0.4);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--panel-border);
-            border-radius: 16px;
-            margin-bottom: 25px;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--panel-border);
         }
 
-        .header h1 {
-            font-size: 1.5rem;
+        .logo-container h1 {
+            font-size: 24px;
             font-weight: 700;
+            letter-spacing: -0.05em;
             background: linear-gradient(to right, #fff, var(--text-muted));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 4px;
+        }
+
+        .logo-container p {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
         }
 
         .status-badge {
             display: flex;
             align-items: center;
-            background: rgba(0, 0, 0, 0.2);
-            padding: 8px 16px;
-            border-radius: 30px;
+            gap: 8px;
+            background: rgba(24, 24, 27, 0.8);
+            padding: 6px 12px;
+            border-radius: 20px;
             border: 1px solid var(--panel-border);
-            font-size: 0.85rem;
+            font-size: 13px;
             font-weight: 500;
         }
 
-        .status-indicator {
+        .status-dot {
             width: 8px;
             height: 8px;
+            background-color: var(--warning);
             border-radius: 50%;
+            box-shadow: 0 0 8px var(--warning);
+        }
+
+        .status-dot.online {
             background-color: var(--success);
-            margin-right: 10px;
-            animation: pulseGlow 2s infinite;
+            box-shadow: 0 0 8px var(--success);
         }
 
-        .status-indicator.offline {
-            background-color: var(--danger);
-            animation: pulseWarn 2s infinite;
-        }
-
-        /* Layout Grids */
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 2.5fr 1fr;
-            gap: 25px;
-            margin-bottom: 25px;
-        }
-
-        @media (max-width: 1024px) {
-            .dashboard-grid { grid-template-columns: 1fr; }
-        }
-
-        .metrics-grid {
+        .grid-metrics {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 20px;
-            margin-bottom: 25px;
+            gap: 16px;
         }
 
-        /* Cards */
-        .card {
+        .metric-card {
             background: var(--panel-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
             border: 1px solid var(--panel-border);
-            border-radius: 16px;
-            padding: 25px;
-            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(8px);
         }
 
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.5);
-            border-color: rgba(63, 63, 70, 0.8);
+        .metric-card .label {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
-        .card-header {
+        .metric-card .value {
+            font-size: 28px;
+            font-weight: 600;
+            margin-top: 8px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .pnl-positive { color: var(--success); }
+        .pnl-negative { color: var(--danger); }
+
+        .dashboard-body {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 24px;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .panel-title {
+            font-size: 16px;
+            font-weight: 600;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
             border-bottom: 1px solid var(--panel-border);
-            padding-bottom: 15px;
+            padding-bottom: 12px;
         }
 
-        .card h2 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--text-main);
-            letter-spacing: 0.5px;
+        .position-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .pos-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .pos-field .lbl {
+            font-size: 11px;
+            color: var(--text-muted);
             text-transform: uppercase;
         }
 
-        .chart-card {
-            height: 500px;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
+        .pos-field .val {
+            font-size: 15px;
+            font-weight: 500;
         }
 
-        /* Metrics */
-        .metric-group {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-
-        .metric {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 0.95rem;
-            color: var(--text-muted);
-        }
-
-        .metric span:last-child {
-            font-weight: 600;
-            color: var(--text-main);
-            font-size: 1.05rem;
-        }
-
-        .metric.highlight {
-            background: rgba(255, 255, 255, 0.03);
-            padding: 12px;
+        .btn-override {
+            background: var(--danger-bg);
+            color: var(--danger);
+            border: 1px solid var(--danger);
+            padding: 12px 24px;
             border-radius: 8px;
-            border-left: 3px solid var(--accent);
-        }
-
-        .metric.wallet {
-            background: var(--accent-glow);
-            border: 1px solid rgba(56, 189, 248, 0.3);
-            padding: 15px;
-            border-radius: 10px;
-            margin-top: 10px;
-        }
-        
-        .metric.wallet span:last-child {
-            font-size: 1.4rem;
-            color: var(--accent);
-            text-shadow: 0 0 10px var(--accent-glow);
-        }
-
-        .positive { color: var(--success) !important; text-shadow: 0 0 8px rgba(16,185,129,0.3); }
-        .negative { color: var(--danger) !important; text-shadow: 0 0 8px rgba(239,68,68,0.3); }
-
-        /* Buttons */
-        .btn-danger {
-            background: linear-gradient(135deg, #ef4444, #b91c1c);
-            color: #ffffff;
-            border: none;
-            padding: 14px 20px;
-            border-radius: 10px;
-            cursor: pointer;
             font-weight: 600;
-            font-size: 1rem;
-            width: 100%;
-            margin-top: 20px;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+            cursor: pointer;
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             gap: 8px;
+            transition: all 0.2s ease;
+            width: 100%;
+            margin-top: 8px;
         }
 
-        .btn-danger:hover {
-            background: linear-gradient(135deg, #f87171, #dc2626);
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+        .btn-override:hover:not(:disabled) {
+            background: var(--danger);
+            color: #fff;
+            box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
         }
 
-        .btn-danger:active {
-            transform: translateY(1px);
-        }
-
-        .btn-danger:disabled {
-            background: #3f3f46;
-            color: #71717a;
+        .btn-override:disabled {
+            opacity: 0.5;
             cursor: not-allowed;
-            box-shadow: none;
-            transform: none;
         }
 
-        /* Logs Console */
-        .log-container {
-            background-color: #000000;
-            padding: 20px;
-            border-radius: 12px;
+        .terminal-container {
+            background: #040405;
             border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+            line-height: 1.6;
             height: 350px;
             overflow-y: auto;
-            font-family: var(--font-mono);
-            font-size: 0.85rem;
-            line-height: 1.6;
-            box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
-        }
-
-        /* Custom Scrollbar for Logs */
-        .log-container::-webkit-scrollbar { width: 8px; }
-        .log-container::-webkit-scrollbar-track { background: #000; border-radius: 4px; }
-        .log-container::-webkit-scrollbar-thumb { background: #27272a; border-radius: 4px; }
-        .log-container::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
-
-        .log-entry {
-            margin-bottom: 10px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid rgba(39, 39, 42, 0.5);
-            word-wrap: break-word;
-        }
-        .log-entry:last-child { border-bottom: none; }
-        
-        .badge {
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: bold;
-            margin-right: 8px;
-            display: inline-block;
-        }
-        .badge-brain { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }
-        .badge-exec { background: var(--success-bg); color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
-        .badge-veto { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
-        .badge-system { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid rgba(56,189,248,0.3); }
-
-        .empty-state {
+            color: #38bdf8;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: var(--text-muted);
-            text-align: center;
-            padding: 20px;
         }
-        .empty-state svg {
-            width: 48px;
-            height: 48px;
-            margin-bottom: 15px;
-            opacity: 0.5;
+
+        .terminal-row {
+            border-bottom: 1px solid rgba(63, 63, 70, 0.2);
+            padding: 4px 0;
+            white-space: pre-wrap;
         }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <!-- Header -->
-    <div class="header animate-up">
-        <div>
-            <h1>UpsideDownCake Terminal</h1>
-            <p style="color: var(--text-muted); font-size: 0.9rem;" id="market-name">Establishing Handshake...</p>
+    <header>
+        <div class="logo-container">
+            <h1>UpsideDownCake</h1>
+            <p id="system-market">Connecting to Oracle Network...</p>
         </div>
         <div class="status-badge">
-            <span class="status-indicator" id="pulse"></span>
-            <span id="system-status">Initializing Core</span>
+            <div id="status-dot" class="status-dot"></div>
+            <span id="status-text">OFFLINE</span>
+            <span style="color: var(--text-muted); padding: 0 4px;">|</span>
+            <span id="ui-veto-threshold">Veto: --</span>
+        </div>
+    </header>
+
+    <div class="grid-metrics">
+        <div class="metric-card">
+            <div class="label">Wallet Balance</div>
+            <div id="metric-balance" class="value">-- USDC</div>
+        </div>
+        <div class="metric-card">
+            <div class="label">Net PnL</div>
+            <div id="metric-net-pnl" class="value">-- USDC</div>
+        </div>
+        <div class="metric-card">
+            <div class="label">Win Rate</div>
+            <div id="metric-winrate" class="value">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="label">Performance (W/L)</div>
+            <div id="metric-ratio" class="value">-- / --</div>
         </div>
     </div>
 
-    <!-- Top Metrics Row -->
-    <div class="metrics-grid animate-up delay-1">
-        <div class="card">
-            <div class="metric-group">
-                <div class="metric"><span>Win Rate</span> <span id="win-rate">0.00%</span></div>
-                <div class="metric"><span>Total Trades</span> <span id="total-trades">0</span></div>
-                <div class="metric"><span>Wins / Losses</span> <span id="win-loss">0 / 0</span></div>
+    <div class="dashboard-body">
+        <div class="panel">
+            <div class="panel-title">
+                <span>Current Market Vector</span>
+                <span id="pos-type-badge" style="font-size: 12px; padding: 2px 8px; border-radius: 4px;">NO POSITION</span>
             </div>
-        </div>
-        <div class="card">
-            <div class="metric-group">
-                <div class="metric highlight"><span>Gross PnL</span> <span id="gross-pnl">$0.00</span></div>
-                <div class="metric highlight"><span>Net PnL</span> <span id="net-pnl">$0.00</span></div>
+            
+            <div id="position-content" class="position-details">
+                <div class="pos-field"><div class="lbl">Allocation Size</div><div id="pos-size" class="val">0.00 SOL</div></div>
+                <div class="pos-field"><div class="lbl">Entry Trigger</div><div id="pos-entry" class="val">$0.0000</div></div>
+                <div class="pos-field"><div class="lbl">Index Price</div><div id="pos-current" class="val">$0.0000</div></div>
+                <div class="pos-field"><div class="lbl">Stop Loss Bracket</div><div id="pos-sl" class="val">$0.0000</div></div>
+                <div class="pos-field"><div class="lbl">Take Profit Bracket</div><div id="pos-tp" class="val">$0.0000</div></div>
+                <div class="pos-field" style="grid-column: span 2;"><div class="lbl">Strategy Hold Condition</div><div id="pos-condition" class="val" style="color: var(--text-muted);">Awaiting infrastructure trend confirmation.</div></div>
             </div>
+
+            <button id="btn-override" class="btn-override" onclick="forceCloseMarket()">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                FORCE CLOSE MARKET
+            </button>
         </div>
-        <div class="card" style="display: flex; flex-direction: column; justify-content: center;">
-            <div class="metric wallet">
-                <span>PAPER WALLET</span> 
-                <span id="wallet-balance">$1000.00</span>
+
+        <div class="panel">
+            <div class="panel-title">Jupiter Oracle Pipeline Telemetry</div>
+            <div id="terminal" class="terminal-container">
+                <div class="terminal-row">🔄 Operationalizing backend event streams...</div>
             </div>
         </div>
     </div>
 
-    <!-- Main Content Grid -->
-    <div class="dashboard-grid">
-        
-        <!-- Left Column: Chart & Logs -->
-        <div style="display: flex; flex-direction: column; gap: 25px;">
-            <div class="card chart-card animate-up delay-2">
-                <div class="card-header">
-                    <h2>Live Market Context (SOL/USD)</h2>
-                </div>
-                <div class="tradingview-widget-container" style="flex-grow: 1; width: 100%;">
-                    <div id="tradingview_sol" style="height: 100%; width: 100%;"></div>
-                    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-                    <script type="text/javascript">
-                    new TradingView.widget({
-                        "autosize": true,
-                        "symbol": "COINBASE:SOLUSD", 
-                        "interval": "5", 
-                        "timezone": "Etc/UTC",
-                        "theme": "dark",
-                        "style": "1",
-                        "locale": "en",
-                        "enable_publishing": false,
-                        "backgroundColor": "rgba(24, 24, 27, 0)", 
-                        "gridColor": "rgba(63, 63, 70, 0.4)",
-                        "hide_top_toolbar": false,
-                        "hide_legend": false,
-                        "save_image": false,
-                        "container_id": "tradingview_sol",
-                        "studies": [
-                            "ADX@tv-basicstudies",
-                            "RSI@tv-basicstudies",
-                            "ATR@tv-basicstudies"
-                        ]
-                    });
-                    </script>
-                </div>
-            </div>
+    <script>
+        async function fetchDashboardData() {
+            try {
+                const response = await fetch("/api/data");
+                const data = await response.json();
 
-            <div class="card animate-up delay-3">
-                <div class="card-header">
-                    <h2>Terminal Logs & Engine Output</h2>
-                </div>
-                <div class="log-container" id="log-container">
-                    <div class="empty-state">
-                        Awaiting engine telemetry...
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Right Column: Position Details -->
-        <div class="card animate-up delay-3" style="height: fit-content;">
-            <div class="card-header">
-                <h2>Active Position</h2>
-                <span style="font-size: 0.8rem; background: var(--panel-border); padding: 3px 8px; border-radius: 4px;">LIVE</span>
-            </div>
-            
-            <div id="position-container">
-                <div class="empty-state" style="padding: 40px 0;">
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                    <span>No Active Contracts</span>
-                </div>
-            </div>
-        </div>
-
-    </div>
-</div>
-
-<script>
-    const API_URL = "/api/data"; 
-    const POLL_INTERVAL = 5000; 
-    let previousBalance = 1000.00;
-
-    async function fetchDashboardData() {
-        try {
-            const response = await fetch(API_URL);
-            if (!response.ok) throw new Error("Network response was not ok");
-            const data = await response.json();
-            updateUI(data);
-            
-            // Pulse Effect for Online Status
-            const indicator = document.getElementById('pulse');
-            indicator.classList.remove('offline');
-            document.getElementById('system-status').innerText = `System Secure • ${new Date().toLocaleTimeString()}`;
-            
-        } catch (error) {
-            console.error("Fetch error:", error);
-            document.getElementById('system-status').innerText = "Telemetry Lost";
-            const indicator = document.getElementById('pulse');
-            indicator.classList.add('offline');
-        }
-    }
-
-    function formatCurrency(num) {
-        return num < 0 ? `-$${Math.abs(num).toFixed(4)}` : `$${num.toFixed(4)}`;
-    }
-
-    function updateUI(data) {
-        document.getElementById('market-name').innerText = data.market;
-
-        // Metrics Update
-        const metrics = data.live_metrics;
-        document.getElementById('win-rate').innerText = metrics.win_rate;
-        document.getElementById('total-trades').innerText = metrics.total_trades;
-        document.getElementById('win-loss').innerText = `${metrics.wins} / ${metrics.losses}`;
-        
-        const grossEl = document.getElementById('gross-pnl');
-        grossEl.innerText = formatCurrency(metrics.gross_pnl_usdc);
-        grossEl.className = metrics.gross_pnl_usdc >= 0 ? 'positive' : 'negative';
-        
-        const netEl = document.getElementById('net-pnl');
-        netEl.innerText = formatCurrency(metrics.net_pnl_usdc);
-        netEl.className = metrics.net_pnl_usdc >= 0 ? 'positive' : 'negative';
-
-        // NEW: Wallet Balance Update
-        const balanceEl = document.getElementById('wallet-balance');
-        if (metrics.wallet_balance_usdc !== undefined) {
-            balanceEl.innerText = formatCurrency(metrics.wallet_balance_usdc);
-            
-            // Flash animation if balance changes
-            if (metrics.wallet_balance_usdc !== previousBalance) {
-                const color = metrics.wallet_balance_usdc > previousBalance ? '#10b981' : '#ef4444';
-                balanceEl.style.transition = 'color 0.3s, text-shadow 0.3s';
-                balanceEl.style.color = '#fff';
-                balanceEl.style.textShadow = `0 0 20px ${color}`;
-                setTimeout(() => {
-                    balanceEl.style.color = 'var(--accent)';
-                    balanceEl.style.textShadow = '0 0 10px var(--accent-glow)';
-                }, 1000);
-                previousBalance = metrics.wallet_balance_usdc;
-            }
-        }
-
-        // Position Update
-        const posContainer = document.getElementById('position-container');
-        if (data.current_position) {
-            const pos = data.current_position;
-            const isLong = pos.type.includes('LONG');
-            
-            posContainer.innerHTML = `
-                <div class="metric-group">
-                    <div class="metric highlight" style="border-left-color: ${isLong ? 'var(--success)' : 'var(--danger)'}">
-                        <span>Direction:</span> 
-                        <span class="${isLong ? 'positive' : 'negative'}">${pos.type}</span>
-                    </div>
-                    <div class="metric"><span>Size:</span> <span>${pos.bet_size}</span></div>
-                    <div class="metric"><span>Entry Price:</span> <span>$${pos.entry_price.toFixed(4)}</span></div>
-                    <div class="metric" style="margin-bottom: 10px;"><span>Current Price:</span> <span>$${pos.current_price.toFixed(4)}</span></div>
-                    
-                    <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; border: 1px solid var(--panel-border);">
-                        <div class="metric" style="margin-bottom: 8px;">
-                            <span style="color: var(--danger); font-size: 0.85rem;">Stop Loss (SL)</span> 
-                            <span>$${pos.stop_loss.toFixed(4)}</span>
-                        </div>
-                        <div style="text-align: right; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px;">
-                            Dist: ${pos.distance_to_sl}
-                        </div>
-                        
-                        <div class="metric" style="margin-bottom: 8px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
-                            <span style="color: var(--success); font-size: 0.85rem;">Take Profit (TP)</span> 
-                            <span>$${pos.take_profit.toFixed(4)}</span>
-                        </div>
-                        <div style="text-align: right; font-size: 0.8rem; color: var(--text-muted);">
-                            Dist: ${pos.distance_to_tp}
-                        </div>
-                    </div>
-                </div>
+                // 1. Header & Status Mapping
+                document.getElementById("system-market").innerText = data.market || "SOL-PERP (Jupiter Hybrid Oracle)";
+                document.getElementById("ui-veto-threshold").innerText = `Veto: ${data.current_veto_threshold || "50.00%"}`;
                 
-                <button class="btn-danger" id="override-btn" onclick="forceClosePosition()">
-                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                    FORCE CLOSE MARKET
-                </button>
-            `;
-        } else {
-            posContainer.innerHTML = `
-                <div class="empty-state" style="padding: 40px 0;">
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                    <span>No Active Contracts</span>
-                </div>`;
-        }
-
-        // Logs Update with Professional Badges
-        const logContainer = document.getElementById('log-container');
-        if (data.recent_activity_logs && data.recent_activity_logs.length > 0) {
-            logContainer.innerHTML = ''; 
-            
-            data.recent_activity_logs.forEach(log => {
-                let htmlLog = log;
-                
-                // Add stylized badges based on log content
-                if (log.includes("Conviction")) {
-                    htmlLog = `<span class="badge badge-brain">BRAIN</span> <span style="color: var(--text-muted)">${log}</span>`;
-                } else if (log.includes("ALLOWED & EXECUTED")) {
-                    htmlLog = `<span class="badge badge-exec">EXEC</span> <span style="color: var(--success)">${log}</span>`;
-                } else if (log.includes("VETO")) {
-                    htmlLog = `<span class="badge badge-veto">VETO</span> <span style="color: var(--danger)">${log}</span>`;
-                } else if (log.includes("[SETTLED]") || log.includes("[MANUAL OVERRIDE]")) {
-                    htmlLog = `<span class="badge badge-system">SYSTEM</span> <span style="color: var(--accent)">${log}</span>`;
-                } else if (log.includes("[GHOST SETTLED]")) {
-                    htmlLog = `<span class="badge" style="background: rgba(161,161,170,0.15); color: var(--text-muted); border: 1px solid rgba(161,161,170,0.3)">GHOST</span> <span style="color: var(--text-muted)">${log}</span>`;
+                const dot = document.getElementById("status-dot");
+                const txt = document.getElementById("status-text");
+                if (data.status === "online") {
+                    dot.className = "status-dot online";
+                    txt.innerText = "ONLINE";
+                } else {
+                    dot.className = "status-dot";
+                    txt.innerText = "OFFLINE";
                 }
+
+                // 2. Metrics Mapping
+                const metrics = data.live_metrics;
+                document.getElementById("metric-balance").innerText = `${metrics.wallet_balance_usdc.toFixed(4)} USDC`;
                 
-                const logEntry = document.createElement('div');
-                logEntry.className = 'log-entry';
-                logEntry.innerHTML = htmlLog;
-                logContainer.appendChild(logEntry);
-            });
-            
-            // Auto-scroll to bottom only if user hasn't scrolled up manually (basic implementation)
-            logContainer.scrollTop = logContainer.scrollHeight;
-        }
-    }
+                const netPnlEl = document.getElementById("metric-net-pnl");
+                netPnlEl.innerText = `${metrics.net_pnl_usdc >= 0 ? '+' : ''}${metrics.net_pnl_usdc.toFixed(4)} USDC`;
+                netPnlEl.className = metrics.net_pnl_usdc >= 0 ? "value pnl-positive" : "value pnl-negative";
 
-    // Manual Override Execution
-    async function forceClosePosition() {
-        const btn = document.getElementById('override-btn');
-        if (!confirm("⚠️ CRITICAL ACTION ⚠️\n\nAre you absolutely sure you want to force a market close on this live position?")) return;
-        
-        try {
-            if (btn) {
+                document.getElementById("metric-winrate").innerText = metrics.win_rate;
+                document.getElementById("metric-ratio").innerText = `${metrics.wins} W / ${metrics.losses} L`;
+
+                // 3. Position Mapping & Advanced Features (Bracket distances and rules)
+                const pos = data.current_position;
+                const badge = document.getElementById("pos-type-badge");
+                const btnOverride = document.getElementById("btn-override");
+
+                if (pos) {
+                    badge.innerText = pos.type;
+                    badge.style.backgroundColor = pos.type.includes("LONG") ? "var(--success-bg)" : "var(--danger-bg)";
+                    badge.style.color = pos.type.includes("LONG") ? "var(--success)" : "var(--danger)";
+                    btnOverride.disabled = false;
+
+                    document.getElementById("pos-size").innerText = pos.bet_size;
+                    document.getElementById("pos-entry").innerText = `$${pos.entry_price.toFixed(4)}`;
+                    document.getElementById("pos-current").innerText = `$${pos.current_price.toFixed(4)}`;
+                    document.getElementById("pos-sl").innerText = `$${pos.stop_loss.toFixed(4)} (${pos.distance_to_sl})`;
+                    document.getElementById("pos-tp").innerText = `$${pos.take_profit.toFixed(4)} (${pos.distance_to_tp})`;
+                    document.getElementById("pos-condition").innerText = pos.strategy_hold_condition;
+                } else {
+                    badge.innerText = "NO POSITION";
+                    badge.style.backgroundColor = "rgba(63, 63, 70, 0.2)";
+                    badge.style.color = "var(--text-muted)";
+                    btnOverride.disabled = true;
+
+                    document.getElementById("pos-size").innerText = "0.00 SOL";
+                    document.getElementById("pos-entry").innerText = "$0.0000";
+                    document.getElementById("pos-current").innerText = "$0.0000";
+                    document.getElementById("pos-sl").innerText = "$0.0000";
+                    document.getElementById("pos-tp").innerText = "$0.0000";
+                    document.getElementById("pos-condition").innerText = "Awaiting infrastructure trend confirmation.";
+                }
+
+                // 4. Logs / Terminal Mapping
+                const term = document.getElementById("terminal");
+                term.innerHTML = ""; // Clear out old lines
+                if (data.recent_activity_logs && data.recent_activity_logs.length > 0) {
+                    data.recent_activity_logs.forEach(log => {
+                        const row = document.createElement("div");
+                        row.className = "terminal-row";
+                        row.innerText = log;
+                        term.appendChild(row);
+                    });
+                } else {
+                    term.innerHTML = '<div class="terminal-row">🔄 Standby. Listening for next candle matrix...</div>';
+                }
+
+            } catch (err) {
+                console.error("Dashboard fetch failed:", err);
+                document.getElementById("status-dot").className = "status-dot";
+                document.getElementById("status-text").innerText = "CONN ERROR";
+            }
+        }
+
+        async function forceCloseMarket() {
+            const btn = document.getElementById("btn-override");
+            if (!confirm("Execute Emergency Market Override Signal? This will settle your current position at current market rates.")) return;
+            
+            try {
                 btn.disabled = true;
-                btn.innerHTML = `<svg class="animate-spin" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> BROADCASTING TX...`;
-            }
-            
-            const response = await fetch("/api/override/close", { 
-                method: "POST",
-                headers: { "Content-Type": "application/json" }
-            });
-            const data = await response.json();
-            
-            if (data.status === "success") {
-                await fetchDashboardData(); // Immediate UI refresh
-            } else {
-                alert(data.message);
-            }
-        } catch (error) {
-            console.error("Override Execution failed:", error);
-            alert("Network Error: Manual override signal could not reach server.");
-        } finally {
-            if (btn) {
+                btn.innerHTML = `BROADCASTING TX...`;
+                
+                const response = await fetch("/api/override/close", { method: "POST" });
+                const result = await response.json();
+                
+                if (result.status === "success") {
+                    await fetchDashboardData();
+                } else {
+                    alert(`Override Rejected: ${result.message}`);
+                }
+            } catch (error) {
+                console.error("Override execution error:", error);
+                alert("Network Error: Manual override signal could not reach server.");
+            } finally {
                 btn.disabled = false;
-                btn.innerHTML = `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> FORCE CLOSE MARKET`;
+                btn.innerHTML = `<svg width width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> FORCE CLOSE MARKET`;
             }
         }
-    }
 
-    // Add spin animation dynamically for the loading button state
-    const style = document.createElement('style');
-    style.innerHTML = `@keyframes spin { 100% { transform: rotate(360deg); } }`;
-    document.head.appendChild(style);
-
-    // Init
-    fetchDashboardData();
-    setInterval(fetchDashboardData, POLL_INTERVAL);
-</script>
-
+        // Initialize polling cycles (Every 3 seconds keeps the UI lightning fast)
+        setInterval(fetchDashboardData, 3000);
+        window.onload = fetchDashboardData;
+    </script>
 </body>
 </html>
