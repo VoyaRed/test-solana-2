@@ -461,6 +461,7 @@ def get_bot_data():
         "recent_activity_logs": STATE["trade_logs"][::-1]
     }
 
+@app.head("/")
 @app.get("/")
 def serve_dashboard():
     current_dir = os.path.dirname(os.path.realpath(__file__))
