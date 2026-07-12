@@ -51,19 +51,21 @@ RISK_SETTINGS = {
 
 # 🚀 ON-THE-FLY CONFIGURATION
 VETO_THRESHOLD = 0.50
-
-# --- WEB3 INTEGRATION FLAG ---
 LIVE_WEB3_MODE = False
 
+# 🚀 DISCORD WEBHOOK URLS
+DISCORD_WEBHOOK_EXECUTIONS = "https://discord.com/api/webhooks/1526005962823962758/mlxDLG2JxPRV0VWkOoTcYcuIW76dX1cXuRLwWaw3wLNMvk80FxTzKRdgjnoTB9rl_vXH"
+DISCORD_WEBHOOK_VETOES = "https://discord.com/api/webhooks/1526006069971783903/3oDB8tECDCs1DUp1Z6YlNdgsrkndFdHmSRpR_1KcFvJ4wdaTYTHuGDq-xwCb1NSqKiNt"
+DISCORD_WEBHOOK_GHOSTS = "https://discord.com/api/webhooks/1526006633296166962/h7tDGT9JZEqcb2IdWtb2SW_IJHd75nqrSFg7th-IPl2LreN07jccaIoMX-lhKSl7wmbZ"
+
 # --- ENGINE MODEL INITIALIZATION ---
-MODEL_PATH = "veto_engine_alpha.onnx"  # 🚀 UPDATED: Pointing to your alpha model
+MODEL_PATH = "veto_engine_alpha.onnx"  
 
 print(f"🤖 Initializing Inference Engine using file: {MODEL_PATH}")
 try:
     session = ort.InferenceSession(MODEL_PATH)
     input_name = session.get_inputs()[0].name
     label_name = session.get_outputs()[0].name
-    # Handle both single-output or multi-output models depending on how ONNX serialized the probabilities
     outputs = session.get_outputs()
     prob_name = outputs[1].name if len(outputs) > 1 else outputs[0].name
 except Exception as e:
@@ -76,33 +78,47 @@ exchange = ccxt.coinbase({
 SYMBOL = 'SOL/USDC'
 
 # ==============================================================================
+# 📢 DISCORD NOTIFICATION HELPER
+# ==============================================================================
+
+def _post_webhook(url, data):
+    try:
+        requests.post(url, json=data, timeout=5)
+    except Exception as e:
+        print(f"⚠️ Discord Webhook Error: {e}")
+
+def send_discord_webhook(url, title, description, color, fields=None):
+    if not url: return
+    data = {
+        "embeds": [{
+            "title": title,
+            "description": description,
+            "color": color,
+            "fields": fields or [],
+            "footer": {"text": f"UpsideDownCake AI Engine • {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"}
+        }]
+    }
+    # Run in a background thread so it doesn't block your trading loop!
+    threading.Thread(target=_post_webhook, args=(url, data), daemon=True).start()
+
+# ==============================================================================
 # 🔮 HYBRID PRICING & WEB3 EXECUTION
 # ==============================================================================
 
 def get_jupiter_live_price():
     try:
         sol_mint = "So11111111111111111111111111111111111111112"
-        # 🚀 UPDATED: Jupiter Price API V3 Endpoint
         url = f"https://api.jup.ag/price/v3?ids={sol_mint}"
         
-        # 🚀 ADDED: Standard Browser User-Agent to prevent basic cloud-provider IP blocks
         headers = {
+            "x-api-key": "YOUR_JUPITER_API_KEY", 
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/json"
         }
 
-        # 🔧 OPTIONAL PROXY SETTINGS (Uncomment and populate if your host IP is permanently blocked)
-        # proxies = {
-        #     "http": "http://USERNAME:PASSWORD@PROXY_IP:PORT",
-        #     "https": "http://USERNAME:PASSWORD@PROXY_IP:PORT"
-        # }
-        # response = requests.get(url, headers=headers, proxies=proxies, timeout=5)
-
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             json_data = response.json()
-            
-            # 🚀 UPDATED: Flexible V3 parsing to safely extract usdPrice
             price_map = json_data.get("data", json_data)
             
             if sol_mint in price_map:
@@ -134,22 +150,19 @@ def execute_jupiter_transaction(direction, size_sol, price, sl, tp):
 def fetch_and_engineer_features():
     global VETO_THRESHOLD
     try:
-        # 🚀 NEW PAGINATED DATA FETCHING (Solves Coinbase 300-candle hard cap)
         all_candles = []
         batch_limit = 300
         now = exchange.milliseconds()
         
-        # Look back 1500 candles to give the 600 EMA maximum room to warm up
         since = now - (1500 * 5 * 60 * 1000) 
         
-        for _ in range(5):  # 5 batches * 300 candles = 1500 total candles
+        for _ in range(5):  
             batch = exchange.fetch_ohlcv(SYMBOL, timeframe='5m', since=since, limit=batch_limit)
             if not batch:
                 break
             all_candles.extend(batch)
-            # Roll time forward to start right after the last received candle in this batch
             since = batch[-1][0] + (5 * 60 * 1000)
-            time.sleep(5)  # Safety pause to handle rate limits smoothly
+            time.sleep(5)  
             
         if len(all_candles) == 0:
             return None, "No data fetched from exchange", None, None
@@ -159,7 +172,6 @@ def fetch_and_engineer_features():
         df.sort_values('timestamp', inplace=True)
         df.reset_index(drop=True, inplace=True)
         
-        # --- TECHNICAL INDICATOR RUNS ---
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=10)
         df['currentADX'] = adx_df['ADX_10']
         df['prevADX'] = adx_df['ADX_10'].shift(1)
@@ -171,7 +183,6 @@ def fetch_and_engineer_features():
         atr = ta.atr(df['high'], df['low'], df['close'], length=14)
         df['atrPercentage'] = (atr / df['close']) * 100
         
-        # 🚀 Now safely processes with 1,500 candles supporting it
         df['ema600'] = ta.ema(df['close'], length=600)
         df['distanceToHtfEma'] = ((df['close'] - df['ema600']) / df['ema600']) * 100
         
@@ -183,11 +194,13 @@ def fetch_and_engineer_features():
         df['ema21'] = ta.ema(df['close'], length=21)
         df['ema150'] = ta.ema(df['close'], length=150)
 
+        buffer = df['ema9'] * 0.0005 
+        
         bull_fan = (df['ema9'] > df['ema21']) & (df['ema21'] > df['ema150'])
         bear_fan = (df['ema9'] < df['ema21']) & (df['ema21'] < df['ema150'])
 
-        touches_long = (df['low'] <= df['ema9']) & (df['close'] > df['ema9'])
-        touches_short = (df['high'] >= df['ema9']) & (df['close'] < df['ema9'])
+        touches_long = (df['low'] <= (df['ema9'] + buffer)) & (df['close'] > df['ema9'])
+        touches_short = (df['high'] >= (df['ema9'] - buffer)) & (df['close'] < df['ema9'])
 
         df['directionIntent'] = 0.0
         df.loc[bull_fan & touches_long, 'directionIntent'] = 1.0
@@ -197,12 +210,17 @@ def fetch_and_engineer_features():
         df['flip'] = np.where(df['color'] != df['color'].shift(1), 1, 0)
         df['isWhipsaw'] = np.where(df['flip'].rolling(window=3).sum() >= 3, 1.0, 0.0)
         
-        live_row = df.iloc[-2]
+        now_ms = time.time() * 1000
+        last_candle_time = df.iloc[-1]['timestamp']
         
+        if (now_ms - last_candle_time) < 300000:
+            live_row = df.iloc[-2]
+        else:
+            live_row = df.iloc[-1]
+            
         if live_row.isnull().any():
             return None, "Indicators warming up...", None, None
             
-        # 🚀 MATCHES 10 FEATURES USED IN TRAINING_ALPHA
         feature_order = [
             'rsi', 'currentADX', 'adxDelta', 'rvol', 'atrPercentage', 
             'distanceToHtfEma', 'upperWick', 'lowerWick', 'bodySize', 'isWhipsaw'
@@ -215,7 +233,7 @@ def fetch_and_engineer_features():
             "close": float(live_row['close']),
             "high": float(live_row['high']),
             "low": float(live_row['low']),
-            "atr": float(atr.iloc[-2]),
+            "atr": float(atr.iloc[-1] if (now_ms - last_candle_time) >= 300000 else atr.iloc[-2]),
             "direction_intent": float(live_row['directionIntent']) 
         }
         
@@ -228,7 +246,7 @@ def trading_loop():
     global VETO_THRESHOLD
     print("🍰 UpsideDownCake Jupiter Engine Running...")
     
-    first_run = True # 🚀 NEW: Flag to bypass initial sleep delay
+    first_run = True 
 
     while True:
         current_time = time.time()
@@ -246,12 +264,11 @@ def trading_loop():
         
         if features is None:
             print(f"⚠️ [DEBUG] Data fetch failed or warming up: {meta}")
-            time.sleep(10) # Short pause if data fetch fails
+            time.sleep(10) 
             continue
             
         print(f"✅ [DEBUG] Data loaded! Timestamp: {meta} | Exchange Close: ${pricing['close']:.4f}")
 
-        # Jupiter Oracle pricing
         jup_price = get_jupiter_live_price()
         if jup_price is not None:
             print(f"🦎 [DEBUG] Jupiter Web3 Price fetched: ${jup_price:.4f}")
@@ -263,7 +280,7 @@ def trading_loop():
 
         STATE["last_close_price"] = pricing["close"]
             
-        # [Ghost Settlement Logic Remains the Same]
+        # --- GHOST SETTLEMENT LOGIC ---
         if STATE["skipped_trade"] is not None:
             skip_pos = STATE["skipped_trade"]
             if skip_pos["direction"] == 1.0 and pricing["close"] > skip_pos["entry_price"]:
@@ -276,11 +293,22 @@ def trading_loop():
             log_msg = f"👻 [GHOST SETTLED] Tracked skipped setup from {skip_pos['timestamp']}: {outcome}"
             print(log_msg)
             STATE["trade_logs"].append(log_msg)
+            
+            # 📢 WEBHOOK: Ghost Trade Resolution
+            color = 0x00FF00 if "WIN" in outcome else 0xFF0000
+            dir_str = "LONG 📈" if skip_pos["direction"] == 1.0 else "SHORT 📉"
+            fields = [
+                {"name": "Direction", "value": dir_str, "inline": True},
+                {"name": "Theoretical Entry", "value": f"${skip_pos['entry_price']:.4f}", "inline": True},
+                {"name": "Resolution Price", "value": f"${pricing['close']:.4f}", "inline": True},
+                {"name": "Ghost Outcome", "value": outcome, "inline": False}
+            ]
+            send_discord_webhook(DISCORD_WEBHOOK_GHOSTS, "👻 Ghost Trade Resolved", log_msg, color, fields)
+
             STATE["skipped_trade"] = None
             
-        # [Active Trade Management Remains the Same]
+        # --- ACTIVE TRADE MANAGEMENT ---
         if STATE["active_trade"] is not None:
-            # ... (Your existing active trade logic is perfectly fine) ...
             pos = STATE["active_trade"]
             trade_closed = False
             exit_price = 0.0
@@ -339,14 +367,27 @@ def trading_loop():
                 settle_msg = f"📊 [SETTLED] Trade Closed @ {exit_price} | Net PNL: {net_pnl:+.4f} USDC | New Balance: {STATE['performance']['wallet_balance_usdc']:.4f} USDC"
                 print(settle_msg)
                 STATE["trade_logs"].append(settle_msg)
+                
+                # 📢 WEBHOOK: Live Trade Settlement
+                color = 0x00FF00 if net_pnl > 0 else 0xFF0000
+                dir_str = "LONG 📈" if pos["direction"] == 1.0 else "SHORT 📉"
+                fields = [
+                    {"name": "Direction", "value": dir_str, "inline": True},
+                    {"name": "Entry Price", "value": f"${pos['entry_price']:.4f}", "inline": True},
+                    {"name": "Exit Price", "value": f"${exit_price:.4f}", "inline": True},
+                    {"name": "Net PNL", "value": f"{net_pnl:+.4f} USDC", "inline": True},
+                    {"name": "New Balance", "value": f"{STATE['performance']['wallet_balance_usdc']:.4f} USDC", "inline": True},
+                    {"name": "Overall Win Rate", "value": STATE["performance"]["win_rate"], "inline": True}
+                ]
+                send_discord_webhook(DISCORD_WEBHOOK_EXECUTIONS, f"📊 Trade Settled: {outcome_str}", settle_msg, color, fields)
+
                 STATE["active_trade"] = None 
                 
-        # [New Entry Evaluation Logic]
+        # --- NEW ENTRY EVALUATION LOGIC ---
         if STATE["active_trade"] is None:
             direction_intent = pricing["direction_intent"]
             print(f"🧭 [DEBUG] EMA Trend Direction Intent: {direction_intent}")
             
-            # 🚀 NEW: FORCE PREDICTION ON EVERY RUN FOR DEBUGGING (Even if intent is 0)
             try:
                 pred_res = session.run([label_name, prob_name], {input_name: features})
                 prob_win = float(pred_res[1][0][1]) if len(pred_res) > 1 else float(pred_res[0][0])
@@ -359,7 +400,7 @@ def trading_loop():
             
             if direction_intent != 0.0 and prob_win >= VETO_THRESHOLD:
                 stop_loss_distance = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
-                contract_size = 1
+                contract_size = 0.75 
                 entry_p = pricing["close"]
                 
                 if direction_intent == 1.0:
@@ -382,6 +423,21 @@ def trading_loop():
                         "atr": pricing["atr"]
                     }
                     decision_msg = f"✅ ALLOWED & EXECUTED ({direction_str} entry of {contract_size} SOL @ {entry_p})"
+                    
+                    # 📢 WEBHOOK: New Trade Executed
+                    color = 0x00FF00 if direction_intent == 1.0 else 0xFF0000
+                    fields = [
+                        {"name": "Direction", "value": direction_str, "inline": True},
+                        {"name": "Entry Price", "value": f"${entry_p:.4f}", "inline": True},
+                        {"name": "Position Size", "value": f"{contract_size} SOL", "inline": True},
+                        {"name": "Stop Loss", "value": f"${sl_target:.4f}", "inline": True},
+                        {"name": "Take Profit", "value": f"${tp_target:.4f}", "inline": True},
+                        {"name": "Conviction", "value": f"{prob_win:.2%}", "inline": True},
+                        {"name": "Current ATR", "value": f"${pricing['atr']:.4f}", "inline": True}
+                    ]
+                    title = "🟢 LONG Executed" if direction_intent == 1.0 else "🔴 SHORT Executed"
+                    send_discord_webhook(DISCORD_WEBHOOK_EXECUTIONS, title, decision_msg, color, fields)
+
                 else:
                     decision_msg = f"⚠️ ALLOWED BY MODEL BUT ON-CHAIN EXECUTION FAILED"
             else:
@@ -394,8 +450,18 @@ def trading_loop():
                         "entry_price": pricing["close"],
                         "direction": direction_intent
                     }
+                    
+                    # 📢 WEBHOOK: Trade Vetoed by Model
+                    color = 0xFFA500 # Orange
+                    fields = [
+                        {"name": "Direction", "value": direction_str, "inline": True},
+                        {"name": "Current Price", "value": f"${pricing['close']:.4f}", "inline": True},
+                        {"name": "Conviction", "value": f"{prob_win:.2%} (Needs {VETO_THRESHOLD:.2%})", "inline": True},
+                        {"name": "Current ATR", "value": f"${pricing['atr']:.4f}", "inline": True},
+                        {"name": "Action", "value": "Tracked as Ghost Setup 👻", "inline": True}
+                    ]
+                    send_discord_webhook(DISCORD_WEBHOOK_VETOES, "⚠️ Trade Vetoed", decision_msg, color, fields)
             
-            # Log the decision
             log_msg = f"🕒 [{meta}] Conviction: {prob_win:.2%} (Target: {VETO_THRESHOLD:.2%}) | Action: {decision_msg}"
             print(log_msg)
             STATE["trade_logs"].append(log_msg)
@@ -455,6 +521,18 @@ def manual_close_position():
     settle_msg = f"🕹️ [MANUAL OVERRIDE] Force-Closed @ {exit_price} | Net PNL: {net_pnl:+.4f} USDC | New Balance: {STATE['performance']['wallet_balance_usdc']:.4f} USDC"
     print(settle_msg)
     STATE["trade_logs"].append(settle_msg)
+    
+    # 📢 WEBHOOK: Manual Override Closure
+    color = 0x00FF00 if net_pnl > 0 else 0xFF0000
+    dir_str = "LONG 📈" if pos["direction"] == 1.0 else "SHORT 📉"
+    fields = [
+        {"name": "Direction", "value": dir_str, "inline": True},
+        {"name": "Entry Price", "value": f"${pos['entry_price']:.4f}", "inline": True},
+        {"name": "Exit Price (Force)", "value": f"${exit_price:.4f}", "inline": True},
+        {"name": "Net PNL", "value": f"{net_pnl:+.4f} USDC", "inline": True},
+        {"name": "New Balance", "value": f"{STATE['performance']['wallet_balance_usdc']:.4f} USDC", "inline": True}
+    ]
+    send_discord_webhook(DISCORD_WEBHOOK_EXECUTIONS, "🕹️ Manual Force Close", settle_msg, color, fields)
     
     STATE["active_trade"] = None
     return {"status": "success", "message": f"Successfully market-closed position at ${exit_price}."}
