@@ -553,10 +553,12 @@ def get_bot_data():
         dir_str = "LONG 📈" if pos["direction"] == 1.0 else "SHORT 📉"
         
         if pos["direction"] == 1.0:
-            sl_dist = curr_p - sl_p
+            # LONG 📈
+            sl_dist = sl_p - curr_p  # Flipped: Will now output a negative value
             tp_dist = tp_p - curr_p
         else:
-            sl_dist = sl_p - curr_p
+            # SHORT 📉
+            sl_dist = curr_p - sl_p  # Flipped: Will now output a negative value
             tp_dist = curr_p - tp_p
             
         adjusted_position = {
