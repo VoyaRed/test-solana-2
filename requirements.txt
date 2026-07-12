@@ -11,3 +11,4 @@ pydantic
 scikit-learn
 onnxruntime
 requests
+onnxmltools
