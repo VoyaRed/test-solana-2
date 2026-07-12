@@ -1,6 +1,6 @@
 numpy
 pandas
-pandas-ta
+pandas_ta
 ccxt
 tensorflow-cpu
 xgboost
