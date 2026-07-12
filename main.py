@@ -107,14 +107,36 @@ def execute_jupiter_transaction(direction, size_sol, price, sl, tp):
 def fetch_and_engineer_features():
     global VETO_THRESHOLD
     try:
-        # 🚀 FIX: Increased limit from 200 to 1000 to allow the 600 EMA space to warm up
-        candles = exchange.fetch_ohlcv(SYMBOL, timeframe='5m', limit=1000)
-        df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        # 🚀 NEW PAGINATED DATA FETCHING (Solves Coinbase 300-candle hard cap)
+        all_candles = []
+        batch_limit = 300
+        now = exchange.milliseconds()
         
+        # Look back 1500 candles to give the 600 EMA maximum room to warm up
+        since = now - (1500 * 5 * 60 * 1000) 
+        
+        for _ in range(5):  # 5 batches * 300 candles = 1500 total candles
+            batch = exchange.fetch_ohlcv(SYMBOL, timeframe='5m', since=since, limit=batch_limit)
+            if not batch:
+                break
+            all_candles.extend(batch)
+            # Roll time forward to start right after the last received candle in this batch
+            since = batch[-1][0] + (5 * 60 * 1000)
+            time.sleep(0.1)  # Safety pause to handle rate limits smoothly
+            
+        if len(all_candles) == 0:
+            return None, "No data fetched from exchange", None, None
+            
+        df = pd.DataFrame(all_candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df.drop_duplicates(subset=['timestamp'], inplace=True)
+        df.sort_values('timestamp', inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        
+        # --- TECHNICAL INDICATOR RUNS ---
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=10)
         df['currentADX'] = adx_df['ADX_10']
         df['prevADX'] = adx_df['ADX_10'].shift(1)
-        df['adxDelta'] = df['currentADX'] - df['prevADX']  # 🚀 ADDED Alpha Feature
+        df['adxDelta'] = df['currentADX'] - df['prevADX']  
         
         df['rsi'] = ta.rsi(df['close'], length=14)
         df['rvol'] = df['volume'] / df['volume'].rolling(window=20).mean()
@@ -122,7 +144,7 @@ def fetch_and_engineer_features():
         atr = ta.atr(df['high'], df['low'], df['close'], length=14)
         df['atrPercentage'] = (atr / df['close']) * 100
         
-        # 🚀 ADDED Alpha Feature: 600 period HTF EMA distance tracking
+        # 🚀 Now safely processes with 1,500 candles supporting it
         df['ema600'] = ta.ema(df['close'], length=600)
         df['distanceToHtfEma'] = ((df['close'] - df['ema600']) / df['ema600']) * 100
         
@@ -274,11 +296,9 @@ def trading_loop():
         if STATE["active_trade"] is None:
             direction_intent = pricing["direction_intent"]
             
-            # Run model only if strategy structure signals an intent
             if direction_intent != 0.0:
                 try:
                     pred_res = session.run([label_name, prob_name], {input_name: features})
-                    # Handles structure differences across formatting outputs safely
                     prob_win = float(pred_res[1][0][1]) if len(pred_res) > 1 else float(pred_res[0][0])
                 except Exception as e:
                     print(f"⚠️ Inference Error: {e}")
@@ -340,7 +360,6 @@ threading.Thread(target=trading_loop, daemon=True).start()
 # 🌐 API & DASHBOARD ROUTES
 # ==============================================================================
 
-# 🚀 NEW: Dynamically update your model's threshold on the fly
 @app.post("/api/config/threshold")
 def update_threshold(val: float):
     global VETO_THRESHOLD
