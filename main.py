@@ -201,23 +201,42 @@ def trading_loop():
     global VETO_THRESHOLD
     print("🍰 UpsideDownCake Jupiter Engine Running...")
     
+    first_run = True # 🚀 NEW: Flag to bypass initial sleep delay
+
     while True:
         current_time = time.time()
         time_to_next_candle = 300 - (current_time % 300)
-        time.sleep(time_to_next_candle + 3) 
         
+        if first_run:
+            print("\n🚀 [DEBUG] First execution! Bypassing the 5-minute sync delay to test pipeline immediately...")
+            first_run = False
+        else:
+            print(f"\n⏳ [DEBUG] Sleeping for {time_to_next_candle:.0f} seconds until next 5m candle close...")
+            time.sleep(time_to_next_candle + 3) 
+        
+        print("🔄 [DEBUG] Fetching exchange data and engineering 1500 candles...")
         features, meta, pricing, raw_row = fetch_and_engineer_features()
+        
         if features is None:
+            print(f"⚠️ [DEBUG] Data fetch failed or warming up: {meta}")
+            time.sleep(10) # Short pause if data fetch fails
             continue
             
+        print(f"✅ [DEBUG] Data loaded! Timestamp: {meta} | Exchange Close: ${pricing['close']:.4f}")
+
+        # Jupiter Oracle pricing
         jup_price = get_jupiter_live_price()
         if jup_price is not None:
+            print(f"🦎 [DEBUG] Jupiter Web3 Price fetched: ${jup_price:.4f}")
             pricing["close"] = jup_price
             pricing["high"] = max(pricing["high"], jup_price)
             pricing["low"] = min(pricing["low"], jup_price)
+        else:
+            print("⚠️ [DEBUG] Could not fetch Jupiter price, falling back to Exchange data.")
 
         STATE["last_close_price"] = pricing["close"]
             
+        # [Ghost Settlement Logic Remains the Same]
         if STATE["skipped_trade"] is not None:
             skip_pos = STATE["skipped_trade"]
             if skip_pos["direction"] == 1.0 and pricing["close"] > skip_pos["entry_price"]:
@@ -232,7 +251,9 @@ def trading_loop():
             STATE["trade_logs"].append(log_msg)
             STATE["skipped_trade"] = None
             
+        # [Active Trade Management Remains the Same]
         if STATE["active_trade"] is not None:
+            # ... (Your existing active trade logic is perfectly fine) ...
             pos = STATE["active_trade"]
             trade_closed = False
             exit_price = 0.0
@@ -293,17 +314,18 @@ def trading_loop():
                 STATE["trade_logs"].append(settle_msg)
                 STATE["active_trade"] = None 
                 
+        # [New Entry Evaluation Logic]
         if STATE["active_trade"] is None:
             direction_intent = pricing["direction_intent"]
+            print(f"🧭 [DEBUG] EMA Trend Direction Intent: {direction_intent}")
             
-            if direction_intent != 0.0:
-                try:
-                    pred_res = session.run([label_name, prob_name], {input_name: features})
-                    prob_win = float(pred_res[1][0][1]) if len(pred_res) > 1 else float(pred_res[0][0])
-                except Exception as e:
-                    print(f"⚠️ Inference Error: {e}")
-                    continue
-            else:
+            # 🚀 NEW: FORCE PREDICTION ON EVERY RUN FOR DEBUGGING (Even if intent is 0)
+            try:
+                pred_res = session.run([label_name, prob_name], {input_name: features})
+                prob_win = float(pred_res[1][0][1]) if len(pred_res) > 1 else float(pred_res[0][0])
+                print(f"🧠 [DEBUG] ONNX Engine Prediction -> Win Probability: {prob_win:.2%}")
+            except Exception as e:
+                print(f"⚠️ [DEBUG] Inference Error: {e}")
                 prob_win = 0.0
             
             direction_str = "LONG 📈" if direction_intent == 1.0 else "SHORT 📉"
@@ -336,7 +358,7 @@ def trading_loop():
                 else:
                     decision_msg = f"⚠️ ALLOWED BY MODEL BUT ON-CHAIN EXECUTION FAILED"
             else:
-                action_reason = f"Model Conviction ({prob_win:.2%}) below Target" if direction_intent != 0.0 else "No structural EMA trend setup"
+                action_reason = f"Model Conviction ({prob_win:.2%}) below Target" if direction_intent != 0.0 else "No structural EMA trend setup (Intent is 0)"
                 decision_msg = f"❌ VETO ({action_reason})"
                 
                 if direction_intent != 0.0:
@@ -346,10 +368,10 @@ def trading_loop():
                         "direction": direction_intent
                     }
             
-            if direction_intent != 0.0:
-                log_msg = f"🕒 [{meta}] Conviction: {prob_win:.2%} (Target: {VETO_THRESHOLD:.2%}) | Action: {decision_msg}"
-                print(log_msg)
-                STATE["trade_logs"].append(log_msg)
+            # Log the decision
+            log_msg = f"🕒 [{meta}] Conviction: {prob_win:.2%} (Target: {VETO_THRESHOLD:.2%}) | Action: {decision_msg}"
+            print(log_msg)
+            STATE["trade_logs"].append(log_msg)
             
         if len(STATE["trade_logs"]) > 200:
             STATE["trade_logs"].pop(0)
