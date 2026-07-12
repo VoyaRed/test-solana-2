@@ -122,7 +122,7 @@ def fetch_and_engineer_features():
             all_candles.extend(batch)
             # Roll time forward to start right after the last received candle in this batch
             since = batch[-1][0] + (5 * 60 * 1000)
-            time.sleep(35)  # Safety pause to handle rate limits smoothly
+            time.sleep(5)  # Safety pause to handle rate limits smoothly
             
         if len(all_candles) == 0:
             return None, "No data fetched from exchange", None, None
