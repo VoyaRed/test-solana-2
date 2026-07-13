@@ -610,8 +610,9 @@ def get_bot_data():
         
     return {
         "status": "online",
-        "market": "SOL-PERP (Jupiter Hybrid Oracle)",
+        "market": "solana perps market bot by ox :) use wisely! (PROJECT NEPTUNE® AND IT'S SUBSIDIARIES ARE NOT RESPONSIBLE FOR USE.",
         "trading_mode": "LIVE" if LIVE_WEB3_MODE else "PAPER",  # Added to feed active mode state to the UI
+         "current_sol_price": STATE["last_close_price"],  # <--- ADD THIS LINE
         "config_metrics": {
             "current_veto_threshold": f"{VETO_THRESHOLD:.2%}",
             "active_leverage_setting": f"{LEVERAGE}x",
