@@ -29,9 +29,10 @@ STATE = {
     "skipped_trade": None, 
     "last_close_price": 0.0,
     "performance": {
-        "trade_id_counter": 0,  # <-- Added trade ID tracker
+        "trade_id_counter": 0,  
         "wins": 0,
         "losses": 0,
+        "consecutive_losses": 0,  # <-- Added track matrix for circuit breaker
         "total_trades": 0,
         "win_rate": "0.00%",
         "gross_pnl_usdc": 0.0,  
@@ -47,7 +48,7 @@ RISK_SETTINGS = {
     "atrProfitMultiplier": 3.0,   
     "takerFeePerc": 0.0006,       
     "makerFeePerc": 0.0006,      
-    "riskPct": 0.01               
+    "riskPct": 0.02  # <-- Fully activated inside calculation blocks             
 }
 
 LEVERAGE = 10.0       
@@ -299,7 +300,6 @@ def trading_loop():
             trade_closed = False
             exit_price = 0.0
             
-            # NOTE: Removed breakeven logic completely per request. Strictly adheres to TP/SL boundaries.
             if pos["direction"] == 1.0: 
                 if pricing["low"] <= pos["sl"]:
                     exit_price = pos["sl"]
@@ -334,9 +334,11 @@ def trading_loop():
                 if net_pnl > 0:
                     STATE["performance"]["wins"] += 1
                     STATE["performance"]["gross_pnl_usdc"] += net_pnl 
+                    STATE["performance"]["consecutive_losses"] = 0  # <-- Reset state tracking matrix
                     outcome_str = "🎉 win"
                 else:
                     STATE["performance"]["losses"] += 1
+                    STATE["performance"]["consecutive_losses"] += 1 # <-- Increment state tracking matrix
                     outcome_str = "🛑 loss"
                     
                 calc_wr = (STATE["performance"]["wins"] / STATE["performance"]["total_trades"]) * 100
@@ -353,9 +355,9 @@ def trading_loop():
                     {"name": "entry price", "value": f"${pos['entry_price']:.4f}", "inline": True},
                     {"name": "exit price", "value": f"${exit_price:.4f}", "inline": True},
                     {"name": "net pnl", "value": f"{net_pnl:+.4f} USDC", "inline": True},
-                    {"name": "margin used", "value": f"{pos.get('margin_sol', MARGIN_SOL)} SOL @ {pos.get('leverage', LEVERAGE)}x", "inline": True},
+                    {"name": "margin used", "value": f"{pos.get('margin_sol', MARGIN_SOL):.4f} SOL @ {pos.get('leverage', LEVERAGE)}x", "inline": True},
                     {"name": "new balance", "value": f"{STATE['performance']['wallet_balance_usdc']:.4f} USDC", "inline": True},
-                    {"name": "overall win rate", "value": STATE["performance"]["win_rate"], "inline": False} # <-- Win Rate appended here
+                    {"name": "overall win rate", "value": STATE["performance"]["win_rate"], "inline": False}
                 ]
                 title = f"trade {pos['trade_id']} | 📊 trade settled: {outcome_str}"
                 send_discord_webhook(DISCORD_WEBHOOK_EXECUTIONS, title, settle_msg, color, fields)
@@ -375,8 +377,24 @@ def trading_loop():
             
             if direction_intent != 0.0 and prob_win >= VETO_THRESHOLD:
                 stop_loss_distance = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
-                contract_size = MARGIN_SOL * LEVERAGE 
                 entry_p = pricing["close"]
+                
+                # --- DYNAMIC RISK SIZING ENGINE & CIRCUIT BREAKER ---
+                base_risk = RISK_SETTINGS["riskPct"]
+                if STATE["performance"]["consecutive_losses"] >= 3:
+                    applied_risk = base_risk / 2.0
+                    print(f"⚠️ [circuit breaker] {STATE['performance']['consecutive_losses']} consecutive losses. halving risk parameter down to {applied_risk:.2%}")
+                else:
+                    applied_risk = base_risk
+
+                current_balance = STATE["performance"]["wallet_balance_usdc"]
+                margin_usdc = current_balance * applied_risk
+                dynamic_margin_sol = margin_usdc / entry_p
+                contract_size = dynamic_margin_sol * LEVERAGE
+                
+                # Overwrite master metric for configuration mirroring
+                MARGIN_SOL = dynamic_margin_sol
+                # ----------------------------------------------------
                 
                 if direction_intent == 1.0:
                     sl_target = entry_p - stop_loss_distance
@@ -403,15 +421,15 @@ def trading_loop():
                         "tp": tp_target,
                         "atr": pricing["atr"]
                     }
-                    decision_msg = f"✅ allowed & executed ({direction_str} entry of {contract_size} sol using {MARGIN_SOL} sol margin @ {LEVERAGE}x)"
+                    decision_msg = f"✅ allowed & executed ({direction_str} entry of {contract_size:.4f} sol using {MARGIN_SOL:.4f} sol margin @ {LEVERAGE}x)"
                     
                     color = 0x00e5ff if direction_intent == 1.0 else 0xFF0000
                     fields = [
                         {"name": "direction", "value": direction_str, "inline": True},
                         {"name": "entry price", "value": f"${entry_p:.4f}", "inline": True},
-                        {"name": "locked margin", "value": f"{MARGIN_SOL} SOL", "inline": True},
+                        {"name": "locked margin", "value": f"{MARGIN_SOL:.4f} SOL", "inline": True},
                         {"name": "leverage applied", "value": f"{LEVERAGE}x", "inline": True},
-                        {"name": "total order size", "value": f"{contract_size} SOL", "inline": True},
+                        {"name": "total order size", "value": f"{contract_size:.4f} SOL", "inline": True},
                         {"name": "stop loss", "value": f"${sl_target:.4f}", "inline": True},
                         {"name": "take profit", "value": f"${tp_target:.4f}", "inline": True}
                     ]
@@ -528,8 +546,10 @@ def manual_close_position():
     if net_pnl > 0:
         STATE["performance"]["wins"] += 1
         STATE["performance"]["gross_pnl_usdc"] += net_pnl 
+        STATE["performance"]["consecutive_losses"] = 0
     else:
         STATE["performance"]["losses"] += 1
+        STATE["performance"]["consecutive_losses"] += 1
         
     calc_wr = (STATE["performance"]["wins"] / STATE["performance"]["total_trades"]) * 100
     STATE["performance"]["win_rate"] = f"{calc_wr:.2f}%"
@@ -575,8 +595,8 @@ def get_bot_data():
             
         adjusted_position = {
             "type": dir_str,
-            "bet_size": f"{pos['contract_size']} sol",
-            "margin_locked": f"{pos.get('margin_sol', MARGIN_SOL)} sol",
+            "bet_size": f"{pos['contract_size']:.4f} sol",
+            "margin_locked": f"{pos.get('margin_sol', MARGIN_SOL):.4f} sol",
             "leverage_multiplier": f"{pos.get('leverage', LEVERAGE)}x",
             "entry_price": entry_p,
             "current_price": curr_p,
@@ -594,11 +614,12 @@ def get_bot_data():
         "config_metrics": {
             "current_veto_threshold": f"{VETO_THRESHOLD:.2%}",
             "active_leverage_setting": f"{LEVERAGE}x",
-            "active_margin_setting": f"{MARGIN_SOL} sol"
+            "active_margin_setting": f"{MARGIN_SOL:.4f} sol"
         },
         "live_metrics": {
             "wins": STATE["performance"]["wins"],
             "losses": STATE["performance"]["losses"],
+            "consecutive_losses_streak": STATE["performance"]["consecutive_losses"],
             "total_trades": STATE["performance"]["total_trades"],
             "win_rate": STATE["performance"]["win_rate"],
             "gross_pnl_usdc": round(STATE["performance"]["gross_pnl_usdc"], 4),
