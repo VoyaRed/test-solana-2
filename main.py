@@ -420,7 +420,7 @@ def get_bot_data(bot_type: str):
             "take_profit": round(pos["tp"], 4), "distance_to_tp": f"{tp_dist:+.4f} usdc"
         }
         
-    market_name = "project neptune® | solana perps engine" if bot_type.lower() == "sol" else "project apollo® | coinbase perps engine"
+    market_name = "project neptune® | solana perps bot" if bot_type.lower() == "sol" else "project neptune® | link perps bot"
 
     return {
         "status": "online",
