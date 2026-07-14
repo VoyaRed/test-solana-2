@@ -7,7 +7,7 @@ import pandas as pd
 import pandas_ta as ta
 import onnxruntime as ort
 import ccxt
-from fastapi import FastAPI, Path
+from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -44,8 +44,10 @@ STATE_CB = create_default_state(1000.00)
 
 # --- INDEPENDENT BOT CONFIGURATIONS & WEBHOOKS ---
 
-# 1. SOLANA BOT CONFIGURATION
+# 1. SOLANA BOT CONFIGURATION (5-Minute)
 CONFIG_SOL = { 
+    "timeframe": "5m",
+    "timeframe_sec": 300,
     "veto": 0.50, 
     "leverage": 10.0, 
     "margin": 1.0, 
@@ -57,6 +59,9 @@ CONFIG_SOL = {
         "makerFeePerc": 0.0006,      
         "riskPct": 0.02              
     },
+    "trade": {
+        "timeStopCandles": 9999 # Not heavily used in SOL strategy, set high
+    },
     "webhooks": {
         "execution": "https://discord.com/api/webhooks/1526386725079744763/26M6X4lrbzLDD1y1UYFskeujLPOYjR7H5ToPisyD0kWKChMb_2SwYYxMEk2WLMyZgWCi",
         "veto":      "https://discord.com/api/webhooks/1526386989925011726/DvasexYCeu-NWDiFE4tuHxglgUJbgZKk6LDvtrMNH0qANcxhqhpf1KW5a5E0J7ORoMDn",
@@ -65,29 +70,18 @@ CONFIG_SOL = {
     }
 }
 
-# 2. LINK / COINBASE BOT CONFIGURATION
+# 2. LINK / COINBASE BOT CONFIGURATION (15-Minute)
 CONFIG_CB = { 
-    "veto": 0.55,           # ai_threshold
-    "leverage": 5.0,        # leverage: 5x
+    "timeframe": "15m",
+    "timeframe_sec": 900,
+    "veto": 0.55,           
+    "leverage": 5.0,        
     "margin": 0.05, 
     "live_mode": False,
-    "indicators": {
-        "ema_fast_period": 9,      
-        "ema_slow_period": 21,     
-        "macro_ema_fast": 100,     
-        "macro_ema_slow": 200,     
-        "htf_macro_ema": 400,      
-        "min_confidence": 70,
-        "adx_period": 10,          
-        "min_adx_trend_strength": 20
-    },
     "trade": {
         "contractSize": 1.0,          
         "amountContracts": 14.0,       
-        "cooldownCandles": 2,         
-        "max_consecutive_losses": 2,  
-        "penalty_cooldown_candles": 8,
-        "timeStopCandles": 24         
+        "timeStopCandles": 24  # Triple-Barrier Vertical Time-Stop (24 * 15m = 6 hours)
     },
     "risk": {
         "atrStopMultiplier": 1.0,     
@@ -109,10 +103,13 @@ NEPTUNE_WALLET_PRIVATE_KEY = os.getenv("NEPTUNE_WALLET_PRIVATE_KEY")
 
 # --- MODEL INITIALIZATION ---
 MODEL_SOL = "veto_engine_alpha.onnx"  
-MODEL_CB = "veto_engine_cb.onnx"
+MODEL_CB = "veto_engine_alpha_15m_timebound.onnx" # Updated to match your trainer script output
 
 def load_onnx_session(path, name):
     print(f"🤖 initializing {name} engine using file: {path}")
+    if not os.path.exists(path):
+        print(f"⚠️ warning: {path} not found. Ensure the model file is in the root directory.")
+        return None, None, None, None
     try:
         session = ort.InferenceSession(path)
         input_name = session.get_inputs()[0].name
@@ -121,11 +118,11 @@ def load_onnx_session(path, name):
         prob_name = outputs[1].name if len(outputs) > 1 else outputs[0].name
         return session, input_name, label_name, prob_name
     except Exception as e:
-        print(f"⚠️ warning: could not load {path}. error: {e}")
+        print(f"⚠️ error loading {path}: {e}")
         return None, None, None, None
 
-session_sol, in_sol, lbl_sol, prob_sol = load_onnx_session(MODEL_SOL, "solana perps")
-session_cb, in_cb, lbl_cb, prob_cb = load_onnx_session(MODEL_CB, "coinbase perps")
+session_sol, in_sol, lbl_sol, prob_sol = load_onnx_session(MODEL_SOL, "SOLANA PERPS")
+session_cb, in_cb, lbl_cb, prob_cb = load_onnx_session(MODEL_CB, "COINBASE PERPS")
 
 exchange_sol = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 exchange_cb = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
@@ -140,7 +137,7 @@ def _post_webhook(url, data):
     try:
         requests.post(url, json=data, timeout=5)
     except Exception as e:
-        print(f"⚠️ discord webhook error: {e}")
+        pass
 
 def send_discord_webhook(url, title, description, color, fields=None):
     if not url or "YOUR_" in url: return
@@ -149,7 +146,7 @@ def send_discord_webhook(url, title, description, color, fields=None):
         "embeds": [{
             "title": title, "description": description, "color": color,
             "fields": fields or [],
-            "footer": {"text": f"system engine • {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"}
+            "footer": {"text": f"project neptune® • {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"}
         }]
     }
     threading.Thread(target=_post_webhook, args=(url, data), daemon=True).start()
@@ -158,6 +155,19 @@ def send_discord_webhook(url, title, description, color, fields=None):
 # 🔮 PRICING & MOCK EXECUTION LOGIC
 # ==============================================================================
 def get_jupiter_live_price():
+    try:
+        sol_mint = "So11111111111111111111111111111111111111112"
+        url = f"https://api.jup.ag/price/v3?ids={sol_mint}"
+        headers = {"Accept": "application/json"}
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            json_data = response.json()
+            price_map = json_data.get("data", json_data)
+            if sol_mint in price_map:
+                price_str = price_map[sol_mint].get("usdPrice", price_map[sol_mint].get("price"))
+                if price_str: return float(price_str)
+    except Exception as e:
+        pass
     return None
 
 def execute_transaction(network, direction, size, price, sl, tp, leverage, margin, is_live):
@@ -169,28 +179,14 @@ def execute_transaction(network, direction, size, price, sl, tp, leverage, margi
         print(f"🔗 [{network} paper] emulating {action} of {size} units...")
         return True 
 
-def fetch_and_engineer_features(exchange, symbol, config):
+# ==============================================================================
+# 🧠 AI FEATURE ENGINEERING PIPELINES
+# ==============================================================================
+
+# Pipeline A: Solana 5-Minute Strategy
+def engineer_features_sol(df, config):
     try:
-        all_candles = []
-        now = exchange.milliseconds()
-        since = now - (1500 * 5 * 60 * 1000) 
-        
-        for _ in range(5):  
-            batch = exchange.fetch_ohlcv(symbol, timeframe='5m', since=since, limit=300)
-            if not batch: break
-            all_candles.extend(batch)
-            since = batch[-1][0] + (5 * 60 * 1000)
-            time.sleep(1)  
-            
-        if len(all_candles) == 0:
-            return None, "no data", None, None
-            
-        df = pd.DataFrame(all_candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df.drop_duplicates(subset=['timestamp'], inplace=True)
-        df.sort_values('timestamp', inplace=True)
-        df.reset_index(drop=True, inplace=True)
-        
-        adx_len = config.get("indicators", {}).get("adx_period", 10)
+        adx_len = 10
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=adx_len)
         df['currentADX'] = adx_df[f'ADX_{adx_len}']
         df['prevADX'] = adx_df[f'ADX_{adx_len}'].shift(1)
@@ -208,61 +204,170 @@ def fetch_and_engineer_features(exchange, symbol, config):
         df['lowerWick'] = df[['open', 'close']].min(axis=1) - df['low']
         df['upperWick'] = df['high'] - df[['open', 'close']].max(axis=1)
         
-        ema_fast = config.get("indicators", {}).get("ema_fast_period", 9)
-        ema_slow = config.get("indicators", {}).get("ema_slow_period", 21)
-        
-        df['ema9'] = ta.ema(df['close'], length=ema_fast)
-        df['ema21'] = ta.ema(df['close'], length=ema_slow)
-        df['ema150'] = ta.ema(df['close'], length=150)
+        # Color & Whipsaw logic
+        df['color'] = np.where(df['close'] >= df['open'], 1, -1)
+        df['flip'] = np.where(df['color'] != df['color'].shift(1), 1, 0)
+        df['isWhipsaw'] = np.where(df['flip'].rolling(window=3).sum() >= 3, 1.0, 0.0)
 
+        # Base Intent Logic
+        df['ema9'] = ta.ema(df['close'], length=9)
+        df['ema21'] = ta.ema(df['close'], length=21)
+        df['ema150'] = ta.ema(df['close'], length=150)
         buffer = df['ema9'] * 0.0005 
+        
         bull_fan = (df['ema9'] > df['ema21']) & (df['ema21'] > df['ema150'])
         bear_fan = (df['ema9'] < df['ema21']) & (df['ema21'] < df['ema150'])
-
         touches_long = (df['low'] <= (df['ema9'] + buffer)) & (df['close'] > df['ema9'])
         touches_short = (df['high'] >= (df['ema9'] - buffer)) & (df['close'] < df['ema9'])
 
         df['directionIntent'] = 0.0
         df.loc[bull_fan & touches_long, 'directionIntent'] = 1.0
         df.loc[bear_fan & touches_short, 'directionIntent'] = -1.0
-        
-        df['color'] = np.where(df['close'] >= df['open'], 1, -1)
-        df['flip'] = np.where(df['color'] != df['color'].shift(1), 1, 0)
-        df['isWhipsaw'] = np.where(df['flip'].rolling(window=3).sum() >= 3, 1.0, 0.0)
-        
+
         now_ms = time.time() * 1000
         last_candle_time = df.iloc[-1]['timestamp']
-        live_row = df.iloc[-2] if (now_ms - last_candle_time) < 300000 else df.iloc[-1]
+        live_row = df.iloc[-2] if (now_ms - last_candle_time) < (config["timeframe_sec"] * 1000) else df.iloc[-1]
             
-        if live_row.isnull().any():
-            return None, "warming up...", None, None
+        if live_row.isnull().any(): return None, "warming up...", None
             
         feature_order = ['rsi', 'currentADX', 'adxDelta', 'rvol', 'atrPercentage', 'distanceToHtfEma', 'upperWick', 'lowerWick', 'bodySize', 'isWhipsaw']
         input_vector = live_row[feature_order].values.astype(np.float32).reshape(1, 10)
-        timestamp_str = pd.to_datetime(live_row['timestamp'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
         
         pricing_data = {
             "close": float(live_row['close']), "high": float(live_row['high']), "low": float(live_row['low']),
-            "atr": float(atr.iloc[-1] if (now_ms - last_candle_time) >= 300000 else atr.iloc[-2]),
+            "atr": float(atr.iloc[-1] if (now_ms - last_candle_time) >= (config["timeframe_sec"] * 1000) else atr.iloc[-2]),
             "direction_intent": float(live_row['directionIntent']) 
         }
-        return input_vector, timestamp_str, pricing_data, live_row.to_dict()
+        timestamp_str = pd.to_datetime(live_row['timestamp'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
+        return input_vector, timestamp_str, pricing_data
     except Exception as e:
-        return None, f"data error: {e}", None, None
+        return None, f"solana engineering error: {e}", None
+
+# Pipeline B: Coinbase LINK 15-Minute Strategy
+def engineer_features_cb(df, config):
+    try:
+        # Standard RSI and ADX
+        df['rsi_15m'] = ta.rsi(df['close'], length=14)
+        adx_df = ta.adx(df['high'], df['low'], df['close'], length=10)
+        df['currentADX'] = adx_df['ADX_10']
+        
+        # 1-Hour RSI (Resampled natively)
+        df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df_1h = df.resample('1h', on='datetime').agg({'close': 'last'}).dropna()
+        df_1h['rsi_1h'] = ta.rsi(df_1h['close'], length=14)
+        df['rsi_1h'] = df['datetime'].map(df_1h['rsi_1h']).fillna(method='ffill')
+
+        # Volume Delta & RVOL
+        vol_sma20 = df['volume'].rolling(window=20).mean()
+        df['rvol'] = df['volume'] / vol_sma20
+        candle_range = (df['high'] - df['low']).replace(0, 0.00001)
+        signed_delta = ((df['close'] - df['open']) / candle_range) * df['volume']
+        df['vol_delta_ratio'] = signed_delta / vol_sma20.replace(0, 1)
+
+        # ATR Ratio
+        df['tr'] = ta.true_range(df['high'], df['low'], df['close'])
+        tr_sum14 = df['tr'].rolling(14).mean()
+        tr_sum100 = df['tr'].rolling(100).mean().replace(0, 1)
+        df['atr_ratio'] = tr_sum14 / tr_sum100
+        raw_atr = df['tr'].rolling(14).mean()
+
+        # Macro Z-Score
+        df['htfEma'] = ta.ema(df['close'], length=400)
+        price_std_dev = df['close'].rolling(50).std()
+        df['macro_ema_zscore'] = (df['close'] - df['htfEma']) / price_std_dev.replace(0, 1)
+
+        # Liquidity Sweep
+        lowest_recent = df['low'].shift(1).rolling(21).min()
+        highest_recent = df['high'].shift(1).rolling(21).max()
+        sweep_long = ((df['low'] < lowest_recent) & (df['close'] > df['open'])).astype(int)
+        sweep_short = ((df['high'] > highest_recent) & (df['close'] < df['open'])).astype(int)
+        df['liquidity_sweep'] = np.maximum(sweep_long, sweep_short)
+
+        # Body to Range
+        body_size = (df['close'] - df['open']).abs()
+        df['body_to_range_ratio'] = body_size / candle_range
+
+        # Whipsaw
+        df['color'] = np.where(df['close'] >= df['open'], 1, -1)
+        df['flip'] = np.where(df['color'] != df['color'].shift(1), 1, 0)
+        df['isWhipsaw'] = np.where(df['flip'].rolling(window=3).sum() >= 3, 1.0, 0.0)
+
+        # Base Intent Logic
+        df['ema9'] = ta.ema(df['close'], length=9)
+        df['ema21'] = ta.ema(df['close'], length=21)
+        df['ema100'] = ta.ema(df['close'], length=100)
+        
+        bull_fan = (df['ema9'] > df['ema21']) & (df['ema21'] > df['ema100'])
+        bear_fan = (df['ema9'] < df['ema21']) & (df['ema21'] < df['ema100'])
+        touches_long = (df['low'] <= df['ema9']) & (df['close'] > df['ema9'])
+        touches_short = (df['high'] >= df['ema9']) & (df['close'] < df['ema9'])
+
+        df['directionIntent'] = 0.0
+        df.loc[bull_fan & touches_long, 'directionIntent'] = 1.0
+        df.loc[bear_fan & touches_short, 'directionIntent'] = -1.0
+
+        now_ms = time.time() * 1000
+        last_candle_time = df.iloc[-1]['timestamp']
+        live_row = df.iloc[-2] if (now_ms - last_candle_time) < (config["timeframe_sec"] * 1000) else df.iloc[-1]
+
+        if live_row.isnull().any(): return None, "warming up...", None
+
+        feature_order = [
+            'rsi_15m', 'rsi_1h', 'currentADX', 'rvol', 'vol_delta_ratio', 
+            'atr_ratio', 'macro_ema_zscore', 'liquidity_sweep', 'body_to_range_ratio', 'isWhipsaw'
+        ]
+        input_vector = live_row[feature_order].values.astype(np.float32).reshape(1, 10)
+        
+        pricing_data = {
+            "close": float(live_row['close']), "high": float(live_row['high']), "low": float(live_row['low']),
+            "atr": float(raw_atr.iloc[-1] if (now_ms - last_candle_time) >= (config["timeframe_sec"] * 1000) else raw_atr.iloc[-2]),
+            "direction_intent": float(live_row['directionIntent']) 
+        }
+        timestamp_str = pd.to_datetime(live_row['timestamp'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
+        return input_vector, timestamp_str, pricing_data
+    except Exception as e:
+        return None, f"coinbase engineering error: {e}", None
+
+def get_market_data_and_features(bot_name, exchange, symbol, config):
+    try:
+        all_candles = []
+        since = exchange.milliseconds() - (1500 * config["timeframe_sec"] * 1000) 
+        
+        for _ in range(5):  
+            batch = exchange.fetch_ohlcv(symbol, timeframe=config["timeframe"], since=since, limit=300)
+            if not batch: break
+            all_candles.extend(batch)
+            since = batch[-1][0] + (config["timeframe_sec"] * 1000)
+            time.sleep(1)  
+            
+        if len(all_candles) == 0: return None, "no data", None
+            
+        df = pd.DataFrame(all_candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df.drop_duplicates(subset=['timestamp'], inplace=True)
+        df.sort_values('timestamp', inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        
+        if bot_name == "SOL": return engineer_features_sol(df, config)
+        elif bot_name == "CB": return engineer_features_cb(df, config)
+        
+    except Exception as e:
+        return None, f"fetch error: {e}", None
 
 # ==============================================================================
 # 🤖 UNIVERSAL TRADING ENGINE LOOP
 # ==============================================================================
 def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_name, state, config):
-    print(f"🌊 {bot_name} engine running for {symbol}...")
+    print(f"🌊 {bot_name} engine running for {symbol} on {config['timeframe']}...")
     first_run = True 
 
     while True:
-        time_to_next_candle = 300 - (time.time() % 300)
-        if first_run: first_run = False
-        else: time.sleep(time_to_next_candle + 15) 
+        tf_sec = config["timeframe_sec"]
+        time_to_next_candle = tf_sec - (time.time() % tf_sec)
         
-        features, meta, pricing, raw_row = fetch_and_engineer_features(exchange, symbol, config)
+        if first_run: first_run = False
+        else: time.sleep(time_to_next_candle + 10) 
+        
+        features, meta, pricing = get_market_data_and_features(bot_name, exchange, symbol, config)
         if features is None:
             time.sleep(10) 
             continue
@@ -271,7 +376,8 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
             jup_price = get_jupiter_live_price()
             if jup_price:
                 pricing["close"] = jup_price
-                pricing["high"], pricing["low"] = max(pricing["high"], jup_price), min(pricing["low"], jup_price)
+                pricing["high"] = max(pricing["high"], jup_price)
+                pricing["low"] = min(pricing["low"], jup_price)
 
         state["last_close_price"] = pricing["close"]
             
@@ -285,22 +391,40 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 
             log_msg = f"👻 [ghost] {bot_name} resolved from {skip_pos['timestamp']}: {outcome}"
             state["trade_logs"].append(log_msg)
+            
+            color = 0x00e5ff if "win" in outcome else 0xFF0000
+            dir_str = "LONG 📈" if skip_pos["direction"] == 1.0 else "SHORT 📉"
+            discord_fields = [
+                {"name": "Direction", "value": dir_str, "inline": True},
+                {"name": "Theoretical Entry", "value": f"${skip_pos['entry_price']:.4f}", "inline": True},
+                {"name": "Resolution Price", "value": f"${pricing['close']:.4f}", "inline": True},
+                {"name": "Ghost Outcome", "value": outcome, "inline": False}
+            ]
+            send_discord_webhook(config["webhooks"]["ghost"], f"👻 {bot_name} Ghost Resolved", log_msg, color, discord_fields)
             state["skipped_trade"] = None
             
-            color = 0x00FF00 if "win" in outcome else 0xFF0000
-            send_discord_webhook(config["webhooks"]["ghost"], f"👻 {bot_name} Ghost Trade Resolved", log_msg, color)
-            
-        # 2. ACTIVE TRADE MANAGEMENT (SETTLEMENT)
+        # 2. ACTIVE TRADE MANAGEMENT (SETTLEMENT & TIME-STOP)
         if state["active_trade"] is not None:
             pos = state["active_trade"]
-            trade_closed, exit_price = False, 0.0
+            trade_closed, exit_price, reason = False, 0.0, ""
             
+            # Triple-Barrier: Check Price Intersections
             if pos["direction"] == 1.0: 
-                if pricing["low"] <= pos["sl"]: exit_price, trade_closed = pos["sl"], True
-                elif pricing["high"] >= pos["tp"]: exit_price, trade_closed = pos["tp"], True
+                if pricing["low"] <= pos["sl"]: exit_price, trade_closed, reason = pos["sl"], True, "Stop Loss"
+                elif pricing["high"] >= pos["tp"]: exit_price, trade_closed, reason = pos["tp"], True, "Take Profit"
             else: 
-                if pricing["high"] >= pos["sl"]: exit_price, trade_closed = pos["sl"], True
-                elif pricing["low"] <= pos["tp"]: exit_price, trade_closed = pos["tp"], True
+                if pricing["high"] >= pos["sl"]: exit_price, trade_closed, reason = pos["sl"], True, "Stop Loss"
+                elif pricing["low"] <= pos["tp"]: exit_price, trade_closed, reason = pos["tp"], True, "Take Profit"
+            
+            # Triple-Barrier: Check Vertical Time-Stop (if trade has stalled)
+            if not trade_closed:
+                current_time_ms = time.time() * 1000
+                time_in_trade_ms = current_time_ms - pos["entry_timestamp_ms"]
+                max_time_ms = config["trade"]["timeStopCandles"] * config["timeframe_sec"] * 1000
+                if time_in_trade_ms >= max_time_ms:
+                    exit_price = pricing["close"]
+                    trade_closed = True
+                    reason = "Vertical Time-Stop Expiration"
             
             if trade_closed:
                 fees = ((pos["entry_price"] * pos["contract_size"]) * config["risk"]["takerFeePerc"]) + \
@@ -317,19 +441,32 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                     state["performance"]["wins"] += 1
                     state["performance"]["gross_pnl_usdc"] += net_pnl 
                     state["performance"]["consecutive_losses"] = 0
+                    outcome_str = "🎉 Win"
                 else:
                     state["performance"]["losses"] += 1
                     state["performance"]["consecutive_losses"] += 1
+                    outcome_str = "🛑 Loss"
                     
                 calc_wr = (state["performance"]["wins"] / state["performance"]["total_trades"]) * 100
                 state["performance"]["win_rate"] = f"{calc_wr:.2f}%"
                 
-                settle_msg = f"📊 [{bot_name} settled] trade {pos['trade_id']} closed @ {exit_price} | pnl: {net_pnl:+.4f} usdc | balance: {state['performance']['wallet_balance_usdc']:.4f} usdc"
+                settle_msg = f"📊 [{bot_name} Settled] trade {pos['trade_id']} closed via {reason} @ {exit_price} | pnl: {net_pnl:+.4f} usdc | balance: {state['performance']['wallet_balance_usdc']:.4f} usdc"
                 state["trade_logs"].append(settle_msg)
-                state["active_trade"] = None 
                 
-                color = 0x00FF00 if net_pnl > 0 else 0xFF0000
-                send_discord_webhook(config["webhooks"]["settle"], f"📊 {bot_name} Trade Settled", settle_msg, color)
+                color = 0x00e5ff if net_pnl > 0 else 0xFF0000
+                dir_str = "LONG 📈" if pos["direction"] == 1.0 else "SHORT 📉"
+                discord_fields = [
+                    {"name": "Direction", "value": dir_str, "inline": True},
+                    {"name": "Entry Price", "value": f"${pos['entry_price']:.4f}", "inline": True},
+                    {"name": "Exit Price", "value": f"${exit_price:.4f}", "inline": True},
+                    {"name": "Net PnL", "value": f"{net_pnl:+.4f} USDC", "inline": True},
+                    {"name": "Margin Used", "value": f"{pos.get('margin_base', config['margin']):.4f} units @ {pos.get('leverage', config['leverage'])}x", "inline": True},
+                    {"name": "New Balance", "value": f"{state['performance']['wallet_balance_usdc']:.4f} USDC", "inline": True},
+                    {"name": "Overall Win Rate", "value": state["performance"]["win_rate"], "inline": False}
+                ]
+                title = f"Trade {pos['trade_id']} | 📊 {bot_name} Settled: {outcome_str}"
+                send_discord_webhook(config["webhooks"]["settle"], title, settle_msg, color, discord_fields)
+                state["active_trade"] = None 
                 
         # 3. NEW ENTRY EVALUATION (EXECUTE OR VETO)
         if state["active_trade"] is None:
@@ -337,8 +474,10 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
             try:
                 pred_res = session.run([lbl_name, prob_name], {in_name: features}) if session else [[0], [[0, 0]]]
                 prob_win = float(pred_res[1][0][1]) if len(pred_res) > 1 else float(pred_res[0][0])
-            except:
+            except Exception as e:
                 prob_win = 0.0
+            
+            direction_str = "LONG 📈" if direction_intent == 1.0 else "SHORT 📉"
             
             if direction_intent != 0.0 and prob_win >= config["veto"]:
                 stop_dist = pricing["atr"] * config["risk"]["atrStopMultiplier"]
@@ -358,32 +497,48 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 
                 if tx_confirmed:
                     state["performance"]["trade_id_counter"] += 1
+                    t_id = state["performance"]["trade_id_counter"]
                     state["active_trade"] = {
-                        "trade_id": state["performance"]["trade_id_counter"],
+                        "trade_id": t_id,
                         "entry_price": entry_p, "direction": direction_intent,
-                        "timestamp": meta, "contract_size": contract_size,
-                        "leverage": config["leverage"], "margin_sol": config["margin"],
+                        "timestamp": meta, "entry_timestamp_ms": time.time() * 1000,
+                        "contract_size": contract_size,
+                        "leverage": config["leverage"], "margin_base": config["margin"],
                         "sl": sl_target, "tp": tp_target, "atr": pricing["atr"]
                     }
-                    decision_msg = f"✅ executed {bot_name} ({contract_size:.4f} units @ {config['leverage']}x)"
+                    decision_msg = f"✅ Allowed & executed ({contract_size:.4f} units @ {config['leverage']}x)"
                     
-                    dir_str = "LONG" if direction_intent == 1.0 else "SHORT"
-                    color = 0x00FF00 if direction_intent == 1.0 else 0xFF0000
-                    send_discord_webhook(config["webhooks"]["execution"], f"🚀 {bot_name} {dir_str} Executed", decision_msg, color)
+                    color = 0x00e5ff if direction_intent == 1.0 else 0xFF0000
+                    discord_fields = [
+                        {"name": "Direction", "value": direction_str, "inline": True},
+                        {"name": "Entry Price", "value": f"${entry_p:.4f}", "inline": True},
+                        {"name": "Locked Margin", "value": f"{config['margin']:.4f} units", "inline": True},
+                        {"name": "Leverage Applied", "value": f"{config['leverage']}x", "inline": True},
+                        {"name": "Total Order Size", "value": f"{contract_size:.4f} units", "inline": True},
+                        {"name": "Stop Loss", "value": f"${sl_target:.4f}", "inline": True},
+                        {"name": "Take Profit", "value": f"${tp_target:.4f}", "inline": True}
+                    ]
+                    title = f"Trade {t_id} | 🟢 {bot_name} Long Executed" if direction_intent == 1.0 else f"Trade {t_id} | 🔴 {bot_name} Short Executed"
+                    send_discord_webhook(config["webhooks"]["execution"], title, decision_msg, color, discord_fields)
                     
                 else: 
-                    decision_msg = f"⚠️ {bot_name} execution failed"
+                    decision_msg = f"⚠️ {bot_name} execution failed on chain/exchange"
             else:
-                reason = f"conviction ({prob_win:.2%})" if direction_intent != 0.0 else "no trend"
-                decision_msg = f"❌ veto ({reason})"
+                reason = f"Conviction ({prob_win:.2%})" if direction_intent != 0.0 else "No structural EMA setup"
+                decision_msg = f"❌ Veto ({reason})"
                 
                 if direction_intent != 0.0:
                     state["skipped_trade"] = {"timestamp": meta, "entry_price": pricing["close"], "direction": direction_intent}
                     
-                    dir_str = "LONG" if direction_intent == 1.0 else "SHORT"
-                    send_discord_webhook(config["webhooks"]["veto"], f"🛡️ {bot_name} {dir_str} Vetoed", decision_msg, 0xFFA500)
+                    color = 0xFFA500
+                    discord_fields = [
+                        {"name": "Direction", "value": direction_str, "inline": True},
+                        {"name": "Current Price", "value": f"${pricing['close']:.4f}", "inline": True},
+                        {"name": "Conviction", "value": f"{prob_win:.2%} (needs {config['veto']:.2%})", "inline": True}
+                    ]
+                    send_discord_webhook(config["webhooks"]["veto"], f"🛡️ {bot_name} Trade Vetoed", decision_msg, color, discord_fields)
             
-            state["trade_logs"].append(f"🕒 [{meta}] {bot_name} action: {decision_msg}")
+            state["trade_logs"].append(f"🕒 [{meta}] {bot_name} Action: {decision_msg}")
             
         if len(state["trade_logs"]) > 200: state["trade_logs"].pop(0)
 
@@ -482,7 +637,7 @@ def get_bot_data(bot_type: str):
             
         adjusted_position = {
             "type": dir_str, "bet_size": f"{pos['contract_size']:.4f} units",
-            "margin_locked": f"{pos.get('margin_sol', config['margin']):.4f} units",
+            "margin_locked": f"{pos.get('margin_base', config['margin']):.4f} units",
             "leverage_multiplier": f"{pos.get('leverage', config['leverage'])}x",
             "entry_price": round(pos["entry_price"], 4), "current_price": curr_p,
             "stop_loss": round(pos["sl"], 4), "distance_to_sl": f"{sl_dist:+.4f} usdc",
@@ -515,7 +670,6 @@ def get_bot_data(bot_type: str):
 @app.head("/")
 @app.get("/")
 def serve_dashboard():
-    # Serve the index.html file if it exists, otherwise fallback to the JSON status
     if os.path.exists("index.html"):
         return FileResponse("index.html")
     return {"status": "online", "message": "API is running (index.html not found)"}
