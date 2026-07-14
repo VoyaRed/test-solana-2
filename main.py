@@ -42,17 +42,21 @@ def create_default_state(initial_balance):
 STATE_SOL = create_default_state(1000.00)
 STATE_CB = create_default_state(1000.00)
 
-# --- INDEPENDENT CONFIGURATIONS & WEBHOOKS ---
-RISK_SETTINGS = {
-    "atrStopMultiplier": 2.0,     
-    "atrProfitMultiplier": 3.0,   
-    "takerFeePerc": 0.0006,       
-    "makerFeePerc": 0.0006,      
-    "riskPct": 0.02              
-}
+# --- INDEPENDENT BOT CONFIGURATIONS & WEBHOOKS ---
 
+# 1. SOLANA BOT CONFIGURATION
 CONFIG_SOL = { 
-    "veto": 0.50, "leverage": 10.0, "margin": 1.0, "live_mode": False,
+    "veto": 0.50, 
+    "leverage": 10.0, 
+    "margin": 1.0, 
+    "live_mode": False,
+    "risk": {
+        "atrStopMultiplier": 2.0,     
+        "atrProfitMultiplier": 3.0,   
+        "takerFeePerc": 0.0006,       
+        "makerFeePerc": 0.0006,      
+        "riskPct": 0.02              
+    },
     "webhooks": {
         "execution": "https://discord.com/api/webhooks/1526386725079744763/26M6X4lrbzLDD1y1UYFskeujLPOYjR7H5ToPisyD0kWKChMb_2SwYYxMEk2WLMyZgWCi",
         "veto":      "https://discord.com/api/webhooks/1526386989925011726/DvasexYCeu-NWDiFE4tuHxglgUJbgZKk6LDvtrMNH0qANcxhqhpf1KW5a5E0J7ORoMDn",
@@ -61,8 +65,38 @@ CONFIG_SOL = {
     }
 }
 
+# 2. LINK / COINBASE BOT CONFIGURATION
 CONFIG_CB = { 
-    "veto": 0.50, "leverage": 10.0, "margin": 0.05, "live_mode": False,
+    "veto": 0.55,           # ai_threshold
+    "leverage": 5.0,        # leverage: 5x
+    "margin": 0.05, 
+    "live_mode": False,
+    "indicators": {
+        "ema_fast_period": 9,      
+        "ema_slow_period": 21,     
+        "macro_ema_fast": 100,     
+        "macro_ema_slow": 200,     
+        "htf_macro_ema": 400,      
+        "min_confidence": 70,
+        "adx_period": 10,          
+        "min_adx_trend_strength": 20
+    },
+    "trade": {
+        "contractSize": 1.0,          
+        "amountContracts": 14.0,       
+        "cooldownCandles": 2,         
+        "max_consecutive_losses": 2,  
+        "penalty_cooldown_candles": 8,
+        "timeStopCandles": 24         
+    },
+    "risk": {
+        "atrStopMultiplier": 1.0,     
+        "atrProfitMultiplier": 2.5,   
+        "slippagePerc": 0.0002,       
+        "takerFeePerc": 0.0006,       
+        "makerFeePerc": 0.0003,
+        "riskPct": 0.02
+    },
     "webhooks": {
         "execution": "https://discord.com/api/webhooks/1526387660971577355/0BJ1hzZCrH00ZYSiIKPlmTU-khceP0cAIfz5s7tbyzerEd4mXX4sDmZ76RixJ_KFB06U",
         "veto":      "https://discord.com/api/webhooks/1526388299168616559/cLXIyKoYpzyc7rZdB2z61uG7xEO_opIvOHknUEuTXLUH2NwzFmz6HYTe50Atioybb8Hz",
@@ -97,7 +131,7 @@ exchange_sol = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType'
 exchange_cb = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 
 SYMBOL_SOL = 'SOL/USDC'
-SYMBOL_CB = 'BTC/USDC' 
+SYMBOL_CB = 'LINK/USDC' 
 
 # ==============================================================================
 # 📢 DISCORD NOTIFICATION HELPER
@@ -109,7 +143,6 @@ def _post_webhook(url, data):
         print(f"⚠️ discord webhook error: {e}")
 
 def send_discord_webhook(url, title, description, color, fields=None):
-    # Ignore if url is empty or still contains the placeholder text
     if not url or "YOUR_" in url: return
     
     data = {
@@ -136,7 +169,7 @@ def execute_transaction(network, direction, size, price, sl, tp, leverage, margi
         print(f"🔗 [{network} paper] emulating {action} of {size} units...")
         return True 
 
-def fetch_and_engineer_features(exchange, symbol):
+def fetch_and_engineer_features(exchange, symbol, config):
     try:
         all_candles = []
         now = exchange.milliseconds()
@@ -157,9 +190,10 @@ def fetch_and_engineer_features(exchange, symbol):
         df.sort_values('timestamp', inplace=True)
         df.reset_index(drop=True, inplace=True)
         
-        adx_df = ta.adx(df['high'], df['low'], df['close'], length=10)
-        df['currentADX'] = adx_df['ADX_10']
-        df['prevADX'] = adx_df['ADX_10'].shift(1)
+        adx_len = config.get("indicators", {}).get("adx_period", 10)
+        adx_df = ta.adx(df['high'], df['low'], df['close'], length=adx_len)
+        df['currentADX'] = adx_df[f'ADX_{adx_len}']
+        df['prevADX'] = adx_df[f'ADX_{adx_len}'].shift(1)
         df['adxDelta'] = df['currentADX'] - df['prevADX']  
         
         df['rsi'] = ta.rsi(df['close'], length=14)
@@ -174,7 +208,12 @@ def fetch_and_engineer_features(exchange, symbol):
         df['lowerWick'] = df[['open', 'close']].min(axis=1) - df['low']
         df['upperWick'] = df['high'] - df[['open', 'close']].max(axis=1)
         
-        df['ema9'], df['ema21'], df['ema150'] = ta.ema(df['close'], length=9), ta.ema(df['close'], length=21), ta.ema(df['close'], length=150)
+        ema_fast = config.get("indicators", {}).get("ema_fast_period", 9)
+        ema_slow = config.get("indicators", {}).get("ema_slow_period", 21)
+        
+        df['ema9'] = ta.ema(df['close'], length=ema_fast)
+        df['ema21'] = ta.ema(df['close'], length=ema_slow)
+        df['ema150'] = ta.ema(df['close'], length=150)
 
         buffer = df['ema9'] * 0.0005 
         bull_fan = (df['ema9'] > df['ema21']) & (df['ema21'] > df['ema150'])
@@ -223,7 +262,7 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
         if first_run: first_run = False
         else: time.sleep(time_to_next_candle + 15) 
         
-        features, meta, pricing, raw_row = fetch_and_engineer_features(exchange, symbol)
+        features, meta, pricing, raw_row = fetch_and_engineer_features(exchange, symbol, config)
         if features is None:
             time.sleep(10) 
             continue
@@ -248,7 +287,6 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
             state["trade_logs"].append(log_msg)
             state["skipped_trade"] = None
             
-            # TRIGGER GHOST WEBHOOK
             color = 0x00FF00 if "win" in outcome else 0xFF0000
             send_discord_webhook(config["webhooks"]["ghost"], f"👻 {bot_name} Ghost Trade Resolved", log_msg, color)
             
@@ -265,8 +303,8 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 elif pricing["low"] <= pos["tp"]: exit_price, trade_closed = pos["tp"], True
             
             if trade_closed:
-                fees = ((pos["entry_price"] * pos["contract_size"]) * RISK_SETTINGS["takerFeePerc"]) + \
-                       ((exit_price * pos["contract_size"]) * RISK_SETTINGS["makerFeePerc"])
+                fees = ((pos["entry_price"] * pos["contract_size"]) * config["risk"]["takerFeePerc"]) + \
+                       ((exit_price * pos["contract_size"]) * config["risk"]["makerFeePerc"])
                 
                 gross_pnl = ((exit_price - pos["entry_price"]) if pos["direction"] == 1.0 else (pos["entry_price"] - exit_price)) * pos["contract_size"]
                 net_pnl = gross_pnl - fees
@@ -290,7 +328,6 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 state["trade_logs"].append(settle_msg)
                 state["active_trade"] = None 
                 
-                # TRIGGER SETTLEMENT WEBHOOK
                 color = 0x00FF00 if net_pnl > 0 else 0xFF0000
                 send_discord_webhook(config["webhooks"]["settle"], f"📊 {bot_name} Trade Settled", settle_msg, color)
                 
@@ -304,10 +341,10 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 prob_win = 0.0
             
             if direction_intent != 0.0 and prob_win >= config["veto"]:
-                stop_dist = pricing["atr"] * RISK_SETTINGS["atrStopMultiplier"]
+                stop_dist = pricing["atr"] * config["risk"]["atrStopMultiplier"]
                 entry_p = pricing["close"]
                 
-                applied_risk = RISK_SETTINGS["riskPct"] / 2.0 if state["performance"]["consecutive_losses"] >= 3 else RISK_SETTINGS["riskPct"]
+                applied_risk = config["risk"]["riskPct"] / 2.0 if state["performance"]["consecutive_losses"] >= 3 else config["risk"]["riskPct"]
                 margin_usdc = state["performance"]["wallet_balance_usdc"] * applied_risk
                 dynamic_margin_asset = margin_usdc / entry_p
                 contract_size = dynamic_margin_asset * config["leverage"]
@@ -315,7 +352,7 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 config["margin"] = dynamic_margin_asset 
                 
                 sl_target = entry_p - stop_dist if direction_intent == 1.0 else entry_p + stop_dist
-                tp_target = entry_p + (pricing["atr"] * RISK_SETTINGS["atrProfitMultiplier"]) if direction_intent == 1.0 else entry_p - (pricing["atr"] * RISK_SETTINGS["atrProfitMultiplier"])
+                tp_target = entry_p + (pricing["atr"] * config["risk"]["atrProfitMultiplier"]) if direction_intent == 1.0 else entry_p - (pricing["atr"] * config["risk"]["atrProfitMultiplier"])
                     
                 tx_confirmed = execute_transaction(bot_name, direction_intent, contract_size, entry_p, sl_target, tp_target, config["leverage"], config["margin"], config["live_mode"])
                 
@@ -330,7 +367,6 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                     }
                     decision_msg = f"✅ executed {bot_name} ({contract_size:.4f} units @ {config['leverage']}x)"
                     
-                    # TRIGGER EXECUTION WEBHOOK
                     dir_str = "LONG" if direction_intent == 1.0 else "SHORT"
                     color = 0x00FF00 if direction_intent == 1.0 else 0xFF0000
                     send_discord_webhook(config["webhooks"]["execution"], f"🚀 {bot_name} {dir_str} Executed", decision_msg, color)
@@ -344,7 +380,6 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 if direction_intent != 0.0:
                     state["skipped_trade"] = {"timestamp": meta, "entry_price": pricing["close"], "direction": direction_intent}
                     
-                    # TRIGGER VETO WEBHOOK (Only trigger if there was intent but it was skipped)
                     dir_str = "LONG" if direction_intent == 1.0 else "SHORT"
                     send_discord_webhook(config["webhooks"]["veto"], f"🛡️ {bot_name} {dir_str} Vetoed", decision_msg, 0xFFA500)
             
@@ -363,7 +398,7 @@ threading.Thread(target=engine_loop, args=("CB", SYMBOL_CB, exchange_cb, session
 def get_bot_context(bot_type: str):
     bt = bot_type.lower()
     if bt == "sol": return STATE_SOL, CONFIG_SOL
-    elif bt == "cb": return STATE_CB, CONFIG_CB
+    elif bt in ["cb", "link"]: return STATE_CB, CONFIG_CB
     return None, None
 
 class TradingModePayload(BaseModel):
@@ -410,7 +445,7 @@ def manual_close_position(bot_type: str):
     pos = state["active_trade"]
     exit_price = state["last_close_price"]
     
-    fees = ((pos["entry_price"] * pos["contract_size"]) * RISK_SETTINGS["takerFeePerc"]) + ((exit_price * pos["contract_size"]) * RISK_SETTINGS["makerFeePerc"])
+    fees = ((pos["entry_price"] * pos["contract_size"]) * config["risk"]["takerFeePerc"]) + ((exit_price * pos["contract_size"]) * config["risk"]["makerFeePerc"])
     gross_pnl = ((exit_price - pos["entry_price"]) if pos["direction"] == 1.0 else (pos["entry_price"] - exit_price)) * pos["contract_size"]
     net_pnl = gross_pnl - fees
     
@@ -480,5 +515,4 @@ def get_bot_data(bot_type: str):
 @app.head("/")
 @app.get("/")
 def serve_dashboard():
-    # Replaced FileResponse to prevent FileNotFoundError during platform health checks
     return {"status": "online", "message": "API is running"}
