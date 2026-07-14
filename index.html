@@ -91,8 +91,8 @@
     </header>
 
     <div class="tabs-container">
-        <button id="tab-sol" class="tab-btn active tab-sol" onclick="switchTab('sol')">sol perps (jupiter))</button>
-        <button id="tab-cb" class="tab-btn tab-cb" onclick="switchTab('cb')">link perps (coinbase))</button>
+        <button id="tab-sol" class="tab-btn active tab-sol" onclick="switchTab('sol')">sol perps (jupiter)</button>
+        <button id="tab-cb" class="tab-btn tab-cb" onclick="switchTab('cb')">link perps (coinbase)</button>
     </div>
 
     <!-- ================== SOLANA DASHBOARD ================== -->
@@ -188,7 +188,7 @@
         }
 
         function updateHeaderContext(botType, data) {
-            document.getElementById("global-market-title").innerText = botType === 'sol' ? "project neptune" : "project apollo";
+            document.getElementById("global-market-title").innerText = botType === 'sol' ? "project neptune" : "project neptune";
             document.getElementById("global-market-subtitle").innerText = data.market.toLowerCase();
             document.getElementById("global-ui-veto").innerText = `veto: ${data.config_metrics.current_veto_threshold}`;
             const dot = document.getElementById("global-status-dot");
