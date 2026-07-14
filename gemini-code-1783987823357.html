@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Bot Orchestrator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #08080a; --panel-bg: #111115; --panel-border: #1f1f24;
+            --text-main: #f4f4f5; --text-muted: #71717a;
+            --accent-blue: #00e5ff; --accent-orange: #f59e0b;
+            --success: #10b981; --success-bg: rgba(16, 185, 129, 0.06);
+            --danger: #ef4444; --danger-bg: rgba(239, 68, 68, 0.06);
+            --font-main: 'Inter', sans-serif; --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background-color: var(--bg-color); color: var(--text-main); font-family: var(--font-main); padding: 20px; display: flex; flex-direction: column; gap: 20px; min-height: 100vh; letter-spacing: -0.01em; text-transform: lowercase; }
+
+        /* HEADER & TABS */
+        header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 4px; }
+        .logo-container h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.03em; color: #ffffff; }
+        .logo-container p { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+        
+        .status-badge { display: flex; align-items: center; gap: 8px; background: #111115; padding: 6px 14px; border-radius: 30px; border: 1px solid var(--panel-border); font-size: 12px; font-weight: 500; }
+        .status-dot { width: 6px; height: 6px; background-color: var(--danger); border-radius: 50%; box-shadow: 0 0 8px var(--danger); }
+        .status-dot.online { background-color: var(--success); box-shadow: 0 0 10px var(--success); }
+
+        .tabs-container { display: flex; gap: 10px; border-bottom: 1px solid var(--panel-border); padding-bottom: 12px; }
+        .tab-btn { background: #111115; border: 1px solid var(--panel-border); color: var(--text-muted); padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .tab-btn:hover { color: #fff; }
+        .tab-btn.active.tab-sol { color: var(--accent-blue); border-color: rgba(0, 229, 255, 0.3); background: rgba(0, 229, 255, 0.05); }
+        .tab-btn.active.tab-cb { color: var(--accent-orange); border-color: rgba(245, 158, 11, 0.3); background: rgba(245, 158, 11, 0.05); }
+
+        /* GRID & CARDS */
+        .dashboard-wrapper { display: none; flex-direction: column; gap: 20px; }
+        .dashboard-wrapper.active { display: flex; }
+        
+        .grid-metrics { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 16px; }
+        .metric-card-split { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+        .metric-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+        .metric-row .lbl { color: var(--text-muted); font-weight: 400; }
+        .metric-row .val { font-weight: 600; font-family: var(--font-mono); }
+        
+        .metric-card-wallet.sol-theme { background: linear-gradient(135deg, #11141a 0%, #111115 100%); border: 1px solid rgba(0, 229, 255, 0.2); box-shadow: inset 0 0 12px rgba(0, 229, 255, 0.03); border-radius: 10px; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+        .metric-card-wallet.cb-theme { background: linear-gradient(135deg, #1a1511 0%, #111115 100%); border: 1px solid rgba(245, 158, 11, 0.2); box-shadow: inset 0 0 12px rgba(245, 158, 11, 0.03); border-radius: 10px; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+        .wallet-info { display: flex; flex-direction: column; gap: 2px; }
+        .wallet-info .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; }
+        .sol-theme .wallet-info .lbl { color: rgba(0, 229, 255, 0.7); }
+        .cb-theme .wallet-info .lbl { color: rgba(245, 158, 11, 0.7); }
+        .wallet-info .val { font-size: 24px; font-weight: 700; font-family: var(--font-mono); }
+        .sol-theme .wallet-info .val { color: var(--accent-blue); text-shadow: 0 0 20px rgba(0, 229, 255, 0.2); }
+        .cb-theme .wallet-info .val { color: var(--accent-orange); text-shadow: 0 0 20px rgba(245, 158, 11, 0.2); }
+
+        .dashboard-body { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: start; }
+        .column-main, .column-sidebar { display: flex; flex-direction: column; gap: 16px; }
+        .panel { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+        .panel-title { font-size: 13px; font-weight: 600; letter-spacing: 0.03em; color: #ffffff; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--panel-border); padding-bottom: 12px; }
+
+        .position-details { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+        .pos-field { display: flex; flex-direction: column; gap: 4px; background: #16161b; padding: 10px 14px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.01); }
+        .pos-field .lbl { font-size: 10px; color: var(--text-muted); letter-spacing: 0.02em; }
+        .pos-field .val { font-size: 14px; font-weight: 600; font-family: var(--font-mono); }
+
+        .btn-override { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239, 108, 108, 0.2); padding: 10px; border-radius: 6px; font-weight: 600; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.15s ease; width: 100%; }
+        .btn-override:hover:not(:disabled) { background: var(--danger); color: #fff; }
+        .btn-override:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .terminal-container { background: #060608; border: 1px solid var(--panel-border); border-radius: 8px; padding: 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; height: 220px; overflow-y: auto; color: #a1a1aa; }
+        .terminal-row { padding: 3px 0; white-space: pre-wrap; border-bottom: 1px solid rgba(255, 255, 255, 0.01); }
+        .term-cyan { color: var(--accent-blue); }
+        .term-orange { color: var(--accent-orange); }
+        .term-green { color: var(--success); }
+        .term-red { color: var(--danger); }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-container">
+            <h1 id="global-market-title">project neptune</h1>
+            <p id="global-market-subtitle">sol perps prediction engine for jupiter.</p>
+        </div>
+        <div class="status-badge">
+            <div id="global-status-dot" class="status-dot"></div>
+            <span id="global-status-text">offline</span>
+            <span style="color: var(--panel-border);">|</span>
+            <span id="global-ui-veto">veto: --</span>
+        </div>
+    </header>
+
+    <div class="tabs-container">
+        <button id="tab-sol" class="tab-btn active tab-sol" onclick="switchTab('sol')">solana perps (neptune)</button>
+        <button id="tab-cb" class="tab-btn tab-cb" onclick="switchTab('cb')">coinbase perps (apollo)</button>
+    </div>
+
+    <!-- ================== SOLANA DASHBOARD ================== -->
+    <div id="sol-dashboard" class="dashboard-wrapper active">
+        <div class="grid-metrics">
+            <div class="metric-card-split">
+                <div class="metric-row"><span class="lbl">win rate</span><span id="sol-metric-winrate" class="val" style="color: var(--accent-blue);">0.00%</span></div>
+                <div class="metric-row"><span class="lbl">performance (w/l)</span><span id="sol-metric-ratio" class="val">0 w / 0 l</span></div>
+            </div>
+            <div class="metric-card-split">
+                <div class="metric-row"><span class="lbl">gross pnl</span><span id="sol-metric-gross" class="val" style="color: var(--success);">$0.0000</span></div>
+                <div class="metric-row"><span class="lbl">net pnl</span><span id="sol-metric-net" class="val">-- usdc</span></div>
+            </div>
+            <div class="metric-card-wallet sol-theme">
+                <div class="wallet-info"><span class="lbl">wallet (sol network)</span><div id="sol-metric-balance" class="val">-- usdc</div></div>
+            </div>
+        </div>
+        <div class="dashboard-body">
+            <div class="column-main">
+                <div class="panel">
+                    <div class="panel-title">terminal logs (sol)</div>
+                    <div id="sol-terminal" class="terminal-container"></div>
+                </div>
+            </div>
+            <div class="column-sidebar">
+                <div class="panel">
+                    <div class="panel-title"><span>active vector</span><span id="sol-pos-badge" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.05);">no active contracts</span></div>
+                    <div class="position-details">
+                        <div class="pos-field"><span class="lbl">size</span><div id="sol-pos-size" class="val">0.00 units</div></div>
+                        <div class="pos-field"><span class="lbl">entry</span><div id="sol-pos-entry" class="val">$0.00</div></div>
+                        <div class="pos-field"><span class="lbl">index</span><div id="sol-pos-current" class="val">$0.00</div></div>
+                        <div class="pos-field"><span class="lbl">stop loss</span><div id="sol-pos-sl" class="val">$0.00</div></div>
+                    </div>
+                    <button id="sol-btn-override" class="btn-override" onclick="forceCloseMarket('sol')">force close market</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================== COINBASE DASHBOARD ================== -->
+    <div id="cb-dashboard" class="dashboard-wrapper">
+        <div class="grid-metrics">
+            <div class="metric-card-split">
+                <div class="metric-row"><span class="lbl">win rate</span><span id="cb-metric-winrate" class="val" style="color: var(--accent-orange);">0.00%</span></div>
+                <div class="metric-row"><span class="lbl">performance (w/l)</span><span id="cb-metric-ratio" class="val">0 w / 0 l</span></div>
+            </div>
+            <div class="metric-card-split">
+                <div class="metric-row"><span class="lbl">gross pnl</span><span id="cb-metric-gross" class="val" style="color: var(--success);">$0.0000</span></div>
+                <div class="metric-row"><span class="lbl">net pnl</span><span id="cb-metric-net" class="val">-- usdc</span></div>
+            </div>
+            <div class="metric-card-wallet cb-theme">
+                <div class="wallet-info"><span class="lbl">wallet (base network)</span><div id="cb-metric-balance" class="val">-- usdc</div></div>
+            </div>
+        </div>
+        <div class="dashboard-body">
+            <div class="column-main">
+                <div class="panel">
+                    <div class="panel-title">terminal logs (cb)</div>
+                    <div id="cb-terminal" class="terminal-container"></div>
+                </div>
+            </div>
+            <div class="column-sidebar">
+                <div class="panel">
+                    <div class="panel-title"><span>active vector</span><span id="cb-pos-badge" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.05);">no active contracts</span></div>
+                    <div class="position-details">
+                        <div class="pos-field"><span class="lbl">size</span><div id="cb-pos-size" class="val">0.00 units</div></div>
+                        <div class="pos-field"><span class="lbl">entry</span><div id="cb-pos-entry" class="val">$0.00</div></div>
+                        <div class="pos-field"><span class="lbl">index</span><div id="cb-pos-current" class="val">$0.00</div></div>
+                        <div class="pos-field"><span class="lbl">stop loss</span><div id="cb-pos-sl" class="val">$0.00</div></div>
+                    </div>
+                    <button id="cb-btn-override" class="btn-override" onclick="forceCloseMarket('cb')">force close market</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PIPELINE LOGIC -->
+    <script>
+        let currentActiveTab = 'sol';
+        let latestData = { sol: null, cb: null };
+
+        function switchTab(botType) {
+            currentActiveTab = botType;
+            document.getElementById('sol-dashboard').classList.remove('active');
+            document.getElementById('cb-dashboard').classList.remove('active');
+            document.getElementById(`${botType}-dashboard`).classList.add('active');
+            
+            document.getElementById('tab-sol').classList.remove('active');
+            document.getElementById('tab-cb').classList.remove('active');
+            document.getElementById(`tab-${botType}`).classList.add('active');
+
+            if (latestData[botType]) updateHeaderContext(botType, latestData[botType]);
+        }
+
+        function updateHeaderContext(botType, data) {
+            document.getElementById("global-market-title").innerText = botType === 'sol' ? "project neptune" : "project apollo";
+            document.getElementById("global-market-subtitle").innerText = data.market.toLowerCase();
+            document.getElementById("global-ui-veto").innerText = `veto: ${data.config_metrics.current_veto_threshold}`;
+            const dot = document.getElementById("global-status-dot");
+            if (data.status === "online") {
+                dot.className = "status-dot online";
+                document.getElementById("global-status-text").innerText = "online";
+            } else {
+                dot.className = "status-dot";
+                document.getElementById("global-status-text").innerText = "offline";
+            }
+        }
+
+        async function fetchBotData(botType) {
+            try {
+                const response = await fetch(`/api/${botType}/data`);
+                const data = await response.json();
+                latestData[botType] = data;
+
+                if (currentActiveTab === botType) updateHeaderContext(botType, data);
+
+                const metrics = data.live_metrics;
+                document.getElementById(`${botType}-metric-balance`).innerText = `${metrics.wallet_balance_usdc.toFixed(4)} usdc`;
+                
+                const netEl = document.getElementById(`${botType}-metric-net`);
+                netEl.innerText = `${metrics.net_pnl_usdc >= 0 ? '+' : ''}${metrics.net_pnl_usdc.toFixed(4)} usdc`;
+                netEl.style.color = metrics.net_pnl_usdc >= 0 ? "var(--success)" : "var(--danger)";
+
+                const grossEl = document.getElementById(`${botType}-metric-gross`);
+                grossEl.innerText = `${metrics.gross_pnl_usdc >= 0 ? '+' : ''}$${metrics.gross_pnl_usdc.toFixed(4)}`;
+                grossEl.style.color = metrics.gross_pnl_usdc >= 0 ? "var(--success)" : "var(--danger)";
+
+                document.getElementById(`${botType}-metric-winrate`).innerText = metrics.win_rate;
+                document.getElementById(`${botType}-metric-ratio`).innerText = `${metrics.wins} w / ${metrics.losses} l`;
+
+                const pos = data.current_position;
+                const badge = document.getElementById(`${botType}-pos-badge`);
+                const btnOverride = document.getElementById(`${botType}-btn-override`);
+
+                if (pos) {
+                    badge.innerText = pos.type;
+                    badge.style.backgroundColor = pos.type.includes("long") ? "var(--success-bg)" : "var(--danger-bg)";
+                    badge.style.color = pos.type.includes("long") ? "var(--success)" : "var(--danger)";
+                    btnOverride.disabled = false;
+
+                    document.getElementById(`${botType}-pos-size`).innerText = pos.bet_size;
+                    document.getElementById(`${botType}-pos-entry`).innerText = `$${pos.entry_price.toFixed(2)}`;
+                    document.getElementById(`${botType}-pos-current`).innerText = `$${pos.current_price.toFixed(2)}`;
+                    document.getElementById(`${botType}-pos-sl`).innerText = `$${pos.stop_loss.toFixed(2)} (${pos.distance_to_sl})`;
+                } else {
+                    badge.innerText = "no active contracts";
+                    badge.style.backgroundColor = "rgba(255,255,255,0.02)";
+                    badge.style.color = "var(--text-muted)";
+                    btnOverride.disabled = true;
+
+                    document.getElementById(`${botType}-pos-size`).innerText = "0.00 units";
+                    document.getElementById(`${botType}-pos-entry`).innerText = "$0.00";
+                    document.getElementById(`${botType}-pos-current`).innerText = `$${data.current_price.toFixed(2)}`;
+                    document.getElementById(`${botType}-pos-sl`).innerText = "$0.00";
+                }
+
+                const term = document.getElementById(`${botType}-terminal`);
+                term.innerHTML = ""; 
+                if (data.recent_activity_logs && data.recent_activity_logs.length > 0) {
+                    data.recent_activity_logs.forEach(log => {
+                        const row = document.createElement("div");
+                        row.className = "terminal-row";
+                        const logText = log.toLowerCase();
+                        
+                        if (logText.includes("veto") || logText.includes("signal")) row.classList.add(`term-${botType === 'sol' ? 'cyan' : 'orange'}`);
+                        if (logText.includes("settled") || logText.includes("success") || logText.includes("long") || logText.includes("win")) row.classList.add("term-green");
+                        if (logText.includes("error") || logText.includes("fail") || logText.includes("short") || logText.includes("loss")) row.classList.add("term-red");
+                        
+                        row.innerText = logText;
+                        term.appendChild(row);
+                    });
+                } else {
+                    term.innerHTML = '<div class="terminal-row">🔄 standby. listening for next candle matrix...</div>';
+                }
+
+            } catch (err) {
+                console.error(`dashboard sync error for ${botType}:`, err);
+            }
+        }
+
+        async function forceCloseMarket(botType) {
+            const btn = document.getElementById(`${botType}-btn-override`);
+            if (!confirm(`execute emergency market override signal for ${botType.toUpperCase()} bot?`)) return;
+            
+            try {
+                btn.disabled = true;
+                btn.innerHTML = `broadcasting tx...`;
+                const response = await fetch(`/api/${botType}/override/close`, { method: "POST" });
+                const result = await response.json();
+                if (result.status === "success") {
+                    await fetchBotData(botType);
+                } else {
+                    alert(`override rejected: ${result.message}`);
+                }
+            } catch (error) {
+                alert("network error during execution broadcast.");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `force close market`;
+            }
+        }
+
+        function pollAll() {
+            fetchBotData('sol');
+            fetchBotData('cb');
+        }
+
+        setInterval(pollAll, 3000);
+        window.onload = pollAll;
+    </script>
+</body>
+</html>
