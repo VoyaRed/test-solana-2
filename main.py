@@ -539,7 +539,7 @@ threading.Thread(target=engine_loop, args=("LINK", SYMBOL_LINK, exchange_link, s
 def get_bot_context(bot_type: str):
     bt = bot_type.lower()
     if bt == "sol": return STATE_SOL, CONFIG_SOL
-    elif bt == "link": return STATE_LINK, CONFIG_LINK
+    elif bt in ["link", "cb"]: return STATE_LINK, CONFIG_LINK
     return None, None
 
 class TradingModePayload(BaseModel):
