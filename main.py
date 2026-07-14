@@ -515,4 +515,7 @@ def get_bot_data(bot_type: str):
 @app.head("/")
 @app.get("/")
 def serve_dashboard():
-    return {"status": "online", "message": "API is running"}
+    # Serve the index.html file if it exists, otherwise fallback to the JSON status
+    if os.path.exists("index.html"):
+        return FileResponse("index.html")
+    return {"status": "online", "message": "API is running (index.html not found)"}
