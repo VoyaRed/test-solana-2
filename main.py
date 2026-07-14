@@ -40,7 +40,7 @@ def create_default_state(initial_balance):
     }
 
 STATE_SOL = create_default_state(1000.00)
-STATE_CB = create_default_state(1000.00)
+STATE_LINK = create_default_state(1000.00)
 
 # --- INDEPENDENT BOT CONFIGURATIONS & WEBHOOKS ---
 
@@ -60,7 +60,7 @@ CONFIG_SOL = {
         "riskPct": 0.02              
     },
     "trade": {
-        "timeStopCandles": 9999 # Not heavily used in SOL strategy, set high
+        "timeStopCandles": 9999 
     },
     "webhooks": {
         "execution": "https://discord.com/api/webhooks/1526386725079744763/26M6X4lrbzLDD1y1UYFskeujLPOYjR7H5ToPisyD0kWKChMb_2SwYYxMEk2WLMyZgWCi",
@@ -70,8 +70,8 @@ CONFIG_SOL = {
     }
 }
 
-# 2. LINK / COINBASE BOT CONFIGURATION (15-Minute)
-CONFIG_CB = { 
+# 2. LINK BOT CONFIGURATION (15-Minute)
+CONFIG_LINK = { 
     "timeframe": "15m",
     "timeframe_sec": 900,
     "veto": 0.55,           
@@ -81,7 +81,7 @@ CONFIG_CB = {
     "trade": {
         "contractSize": 1.0,          
         "amountContracts": 14.0,       
-        "timeStopCandles": 24  # Triple-Barrier Vertical Time-Stop (24 * 15m = 6 hours)
+        "timeStopCandles": 24  
     },
     "risk": {
         "atrStopMultiplier": 1.0,     
@@ -103,7 +103,7 @@ NEPTUNE_WALLET_PRIVATE_KEY = os.getenv("NEPTUNE_WALLET_PRIVATE_KEY")
 
 # --- MODEL INITIALIZATION ---
 MODEL_SOL = "veto_engine_alpha.onnx"  
-MODEL_CB = "veto_engine_alpha_15m_timebound.onnx" # Updated to match your trainer script output
+MODEL_LINK = "veto_engine_alpha_15m_timebound.onnx" 
 
 def load_onnx_session(path, name):
     print(f"🤖 initializing {name} engine using file: {path}")
@@ -122,13 +122,13 @@ def load_onnx_session(path, name):
         return None, None, None, None
 
 session_sol, in_sol, lbl_sol, prob_sol = load_onnx_session(MODEL_SOL, "SOLANA PERPS")
-session_cb, in_cb, lbl_cb, prob_cb = load_onnx_session(MODEL_CB, "COINBASE PERPS")
+session_link, in_link, lbl_link, prob_link = load_onnx_session(MODEL_LINK, "LINK PERPS")
 
 exchange_sol = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
-exchange_cb = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
+exchange_link = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 
 SYMBOL_SOL = 'SOL/USDC'
-SYMBOL_CB = 'LINK/USDC' 
+SYMBOL_LINK = 'LINK/USDC' 
 
 # ==============================================================================
 # 📢 DISCORD NOTIFICATION HELPER
@@ -204,12 +204,10 @@ def engineer_features_sol(df, config):
         df['lowerWick'] = df[['open', 'close']].min(axis=1) - df['low']
         df['upperWick'] = df['high'] - df[['open', 'close']].max(axis=1)
         
-        # Color & Whipsaw logic
         df['color'] = np.where(df['close'] >= df['open'], 1, -1)
         df['flip'] = np.where(df['color'] != df['color'].shift(1), 1, 0)
         df['isWhipsaw'] = np.where(df['flip'].rolling(window=3).sum() >= 3, 1.0, 0.0)
 
-        # Base Intent Logic
         df['ema9'] = ta.ema(df['close'], length=9)
         df['ema21'] = ta.ema(df['close'], length=21)
         df['ema150'] = ta.ema(df['close'], length=150)
@@ -243,56 +241,47 @@ def engineer_features_sol(df, config):
     except Exception as e:
         return None, f"solana engineering error: {e}", None
 
-# Pipeline B: Coinbase LINK 15-Minute Strategy
-def engineer_features_cb(df, config):
+# Pipeline B: LINK 15-Minute Strategy
+def engineer_features_link(df, config):
     try:
-        # Standard RSI and ADX
         df['rsi_15m'] = ta.rsi(df['close'], length=14)
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=10)
         df['currentADX'] = adx_df['ADX_10']
         
-        # 1-Hour RSI (Resampled natively)
         df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
         df_1h = df.resample('1h', on='datetime').agg({'close': 'last'}).dropna()
         df_1h['rsi_1h'] = ta.rsi(df_1h['close'], length=14)
         df['rsi_1h'] = df['datetime'].map(df_1h['rsi_1h']).fillna(method='ffill')
 
-        # Volume Delta & RVOL
         vol_sma20 = df['volume'].rolling(window=20).mean()
         df['rvol'] = df['volume'] / vol_sma20
         candle_range = (df['high'] - df['low']).replace(0, 0.00001)
         signed_delta = ((df['close'] - df['open']) / candle_range) * df['volume']
         df['vol_delta_ratio'] = signed_delta / vol_sma20.replace(0, 1)
 
-        # ATR Ratio
         df['tr'] = ta.true_range(df['high'], df['low'], df['close'])
         tr_sum14 = df['tr'].rolling(14).mean()
         tr_sum100 = df['tr'].rolling(100).mean().replace(0, 1)
         df['atr_ratio'] = tr_sum14 / tr_sum100
         raw_atr = df['tr'].rolling(14).mean()
 
-        # Macro Z-Score
         df['htfEma'] = ta.ema(df['close'], length=400)
         price_std_dev = df['close'].rolling(50).std()
         df['macro_ema_zscore'] = (df['close'] - df['htfEma']) / price_std_dev.replace(0, 1)
 
-        # Liquidity Sweep
         lowest_recent = df['low'].shift(1).rolling(21).min()
         highest_recent = df['high'].shift(1).rolling(21).max()
         sweep_long = ((df['low'] < lowest_recent) & (df['close'] > df['open'])).astype(int)
         sweep_short = ((df['high'] > highest_recent) & (df['close'] < df['open'])).astype(int)
         df['liquidity_sweep'] = np.maximum(sweep_long, sweep_short)
 
-        # Body to Range
         body_size = (df['close'] - df['open']).abs()
         df['body_to_range_ratio'] = body_size / candle_range
 
-        # Whipsaw
         df['color'] = np.where(df['close'] >= df['open'], 1, -1)
         df['flip'] = np.where(df['color'] != df['color'].shift(1), 1, 0)
         df['isWhipsaw'] = np.where(df['flip'].rolling(window=3).sum() >= 3, 1.0, 0.0)
 
-        # Base Intent Logic
         df['ema9'] = ta.ema(df['close'], length=9)
         df['ema21'] = ta.ema(df['close'], length=21)
         df['ema100'] = ta.ema(df['close'], length=100)
@@ -326,7 +315,7 @@ def engineer_features_cb(df, config):
         timestamp_str = pd.to_datetime(live_row['timestamp'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
         return input_vector, timestamp_str, pricing_data
     except Exception as e:
-        return None, f"coinbase engineering error: {e}", None
+        return None, f"link engineering error: {e}", None
 
 def get_market_data_and_features(bot_name, exchange, symbol, config):
     try:
@@ -348,7 +337,7 @@ def get_market_data_and_features(bot_name, exchange, symbol, config):
         df.reset_index(drop=True, inplace=True)
         
         if bot_name == "SOL": return engineer_features_sol(df, config)
-        elif bot_name == "CB": return engineer_features_cb(df, config)
+        elif bot_name == "LINK": return engineer_features_link(df, config)
         
     except Exception as e:
         return None, f"fetch error: {e}", None
@@ -403,12 +392,11 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
             send_discord_webhook(config["webhooks"]["ghost"], f"👻 {bot_name} Ghost Resolved", log_msg, color, discord_fields)
             state["skipped_trade"] = None
             
-        # 2. ACTIVE TRADE MANAGEMENT (SETTLEMENT & TIME-STOP)
+        # 2. ACTIVE TRADE MANAGEMENT
         if state["active_trade"] is not None:
             pos = state["active_trade"]
             trade_closed, exit_price, reason = False, 0.0, ""
             
-            # Triple-Barrier: Check Price Intersections
             if pos["direction"] == 1.0: 
                 if pricing["low"] <= pos["sl"]: exit_price, trade_closed, reason = pos["sl"], True, "Stop Loss"
                 elif pricing["high"] >= pos["tp"]: exit_price, trade_closed, reason = pos["tp"], True, "Take Profit"
@@ -416,7 +404,6 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 if pricing["high"] >= pos["sl"]: exit_price, trade_closed, reason = pos["sl"], True, "Stop Loss"
                 elif pricing["low"] <= pos["tp"]: exit_price, trade_closed, reason = pos["tp"], True, "Take Profit"
             
-            # Triple-Barrier: Check Vertical Time-Stop (if trade has stalled)
             if not trade_closed:
                 current_time_ms = time.time() * 1000
                 time_in_trade_ms = current_time_ms - pos["entry_timestamp_ms"]
@@ -468,7 +455,7 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 send_discord_webhook(config["webhooks"]["settle"], title, settle_msg, color, discord_fields)
                 state["active_trade"] = None 
                 
-        # 3. NEW ENTRY EVALUATION (EXECUTE OR VETO)
+        # 3. NEW ENTRY EVALUATION
         if state["active_trade"] is None:
             direction_intent = pricing["direction_intent"]
             try:
@@ -542,18 +529,17 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
             
         if len(state["trade_logs"]) > 200: state["trade_logs"].pop(0)
 
-# Spin up independent threads
 threading.Thread(target=engine_loop, args=("SOL", SYMBOL_SOL, exchange_sol, session_sol, in_sol, lbl_sol, prob_sol, STATE_SOL, CONFIG_SOL), daemon=True).start()
-threading.Thread(target=engine_loop, args=("CB", SYMBOL_CB, exchange_cb, session_cb, in_cb, lbl_cb, prob_cb, STATE_CB, CONFIG_CB), daemon=True).start()
+threading.Thread(target=engine_loop, args=("LINK", SYMBOL_LINK, exchange_link, session_link, in_link, lbl_link, prob_link, STATE_LINK, CONFIG_LINK), daemon=True).start()
 
 # ==============================================================================
-# 🌐 DYNAMIC API ROUTES (SERVES BOTH BOTS)
+# 🌐 DYNAMIC API ROUTES
 # ==============================================================================
 
 def get_bot_context(bot_type: str):
     bt = bot_type.lower()
     if bt == "sol": return STATE_SOL, CONFIG_SOL
-    elif bt in ["cb", "link"]: return STATE_CB, CONFIG_CB
+    elif bt == "link": return STATE_LINK, CONFIG_LINK
     return None, None
 
 class TradingModePayload(BaseModel):
