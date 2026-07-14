@@ -42,7 +42,7 @@ def create_default_state(initial_balance):
 STATE_SOL = create_default_state(1000.00)
 STATE_CB = create_default_state(1000.00)
 
-# --- INDEPENDENT CONFIGURATIONS ---
+# --- INDEPENDENT CONFIGURATIONS & WEBHOOKS ---
 RISK_SETTINGS = {
     "atrStopMultiplier": 2.0,     
     "atrProfitMultiplier": 3.0,   
@@ -51,13 +51,27 @@ RISK_SETTINGS = {
     "riskPct": 0.02              
 }
 
-CONFIG_SOL = { "veto": 0.50, "leverage": 10.0, "margin": 1.0, "live_mode": False }
-CONFIG_CB = { "veto": 0.50, "leverage": 10.0, "margin": 0.05, "live_mode": False } # Using 0.05 BTC as default margin mock
+CONFIG_SOL = { 
+    "veto": 0.50, "leverage": 10.0, "margin": 1.0, "live_mode": False,
+    "webhooks": {
+        "execution": "https://discord.com/api/webhooks/1526386725079744763/26M6X4lrbzLDD1y1UYFskeujLPOYjR7H5ToPisyD0kWKChMb_2SwYYxMEk2WLMyZgWCi",
+        "veto":      "https://discord.com/api/webhooks/1526386989925011726/DvasexYCeu-NWDiFE4tuHxglgUJbgZKk6LDvtrMNH0qANcxhqhpf1KW5a5E0J7ORoMDn",
+        "settle":    "https://discord.com/api/webhooks/1526387397833785435/Jx43isvgxVYSGagONyMBrYc7QzylbArfz9OlyNUCdwncZntSrpF7e-lOKpRuPcjx2qmf",
+        "ghost":     "https://discord.com/api/webhooks/1526387315683885058/M6gBr41Rvq1SfX_n535SB8yh5HyyZ_AHGYSRLT_CcITXYe2R6lI0KGuY13cEF9dZiqJs"
+    }
+}
+
+CONFIG_CB = { 
+    "veto": 0.50, "leverage": 10.0, "margin": 0.05, "live_mode": False,
+    "webhooks": {
+        "execution": "https://discord.com/api/webhooks/1526387660971577355/0BJ1hzZCrH00ZYSiIKPlmTU-khceP0cAIfz5s7tbyzerEd4mXX4sDmZ76RixJ_KFB06U",
+        "veto":      "https://discord.com/api/webhooks/1526388299168616559/cLXIyKoYpzyc7rZdB2z61uG7xEO_opIvOHknUEuTXLUH2NwzFmz6HYTe50Atioybb8Hz",
+        "settle":    "https://discord.com/api/webhooks/1526388137197178880/hsBeBTYWqFjuoTrbfolYH4eEXCcdXAdGIRZPFW11UmRHNZOsu8ijOUhvdqP4OhiaY0Oa",
+        "ghost":     "https://discord.com/api/webhooks/1526388304000585869/XMgRT1F1rrqoM-YO2MMmOQgIDxs5M7LOLCifVgRQsDksrpZVSotF27dZ-Utmxqaj3gcq"
+    }
+}
 
 NEPTUNE_WALLET_PRIVATE_KEY = os.getenv("NEPTUNE_WALLET_PRIVATE_KEY")
-DISCORD_WEBHOOK_EXECUTIONS = os.getenv("DISCORD_WEBHOOK_EXECUTIONS", "") # Replaced static URLs for safety
-DISCORD_WEBHOOK_VETOES = os.getenv("DISCORD_WEBHOOK_VETOES", "")
-DISCORD_WEBHOOK_GHOSTS = os.getenv("DISCORD_WEBHOOK_GHOSTS", "")
 
 # --- MODEL INITIALIZATION ---
 MODEL_SOL = "veto_engine_alpha.onnx"  
@@ -79,12 +93,11 @@ def load_onnx_session(path, name):
 session_sol, in_sol, lbl_sol, prob_sol = load_onnx_session(MODEL_SOL, "solana perps")
 session_cb, in_cb, lbl_cb, prob_cb = load_onnx_session(MODEL_CB, "coinbase perps")
 
-# Two separate CCXT instances to avoid rate limit/thread collisions
 exchange_sol = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 exchange_cb = ccxt.coinbase({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 
 SYMBOL_SOL = 'SOL/USDC'
-SYMBOL_CB = 'BTC/USDC' # Using BTC for the Coinbase bot distinction
+SYMBOL_CB = 'BTC/USDC' 
 
 # ==============================================================================
 # 📢 DISCORD NOTIFICATION HELPER
@@ -96,7 +109,9 @@ def _post_webhook(url, data):
         print(f"⚠️ discord webhook error: {e}")
 
 def send_discord_webhook(url, title, description, color, fields=None):
-    if not url: return
+    # Ignore if url is empty or still contains the placeholder text
+    if not url or "YOUR_" in url: return
+    
     data = {
         "embeds": [{
             "title": title, "description": description, "color": color,
@@ -110,7 +125,6 @@ def send_discord_webhook(url, title, description, color, fields=None):
 # 🔮 PRICING & MOCK EXECUTION LOGIC
 # ==============================================================================
 def get_jupiter_live_price():
-    # Placeholder for Jupiter API fetching
     return None
 
 def execute_transaction(network, direction, size, price, sl, tp, leverage, margin, is_live):
@@ -222,7 +236,7 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
 
         state["last_close_price"] = pricing["close"]
             
-        # Ghost Log Settlement
+        # 1. GHOST LOG SETTLEMENT
         if state["skipped_trade"] is not None:
             skip_pos = state["skipped_trade"]
             if (skip_pos["direction"] == 1.0 and pricing["close"] > skip_pos["entry_price"]) or \
@@ -234,7 +248,11 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
             state["trade_logs"].append(log_msg)
             state["skipped_trade"] = None
             
-        # Active Trade Management
+            # TRIGGER GHOST WEBHOOK
+            color = 0x00FF00 if "win" in outcome else 0xFF0000
+            send_discord_webhook(config["webhooks"]["ghost"], f"👻 {bot_name} Ghost Trade Resolved", log_msg, color)
+            
+        # 2. ACTIVE TRADE MANAGEMENT (SETTLEMENT)
         if state["active_trade"] is not None:
             pos = state["active_trade"]
             trade_closed, exit_price = False, 0.0
@@ -272,7 +290,11 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                 state["trade_logs"].append(settle_msg)
                 state["active_trade"] = None 
                 
-        # New Entry Evaluation
+                # TRIGGER SETTLEMENT WEBHOOK
+                color = 0x00FF00 if net_pnl > 0 else 0xFF0000
+                send_discord_webhook(config["webhooks"]["settle"], f"📊 {bot_name} Trade Settled", settle_msg, color)
+                
+        # 3. NEW ENTRY EVALUATION (EXECUTE OR VETO)
         if state["active_trade"] is None:
             direction_intent = pricing["direction_intent"]
             try:
@@ -307,12 +329,24 @@ def engine_loop(bot_name, symbol, exchange, session, in_name, lbl_name, prob_nam
                         "sl": sl_target, "tp": tp_target, "atr": pricing["atr"]
                     }
                     decision_msg = f"✅ executed {bot_name} ({contract_size:.4f} units @ {config['leverage']}x)"
-                else: decision_msg = f"⚠️ {bot_name} execution failed"
+                    
+                    # TRIGGER EXECUTION WEBHOOK
+                    dir_str = "LONG" if direction_intent == 1.0 else "SHORT"
+                    color = 0x00FF00 if direction_intent == 1.0 else 0xFF0000
+                    send_discord_webhook(config["webhooks"]["execution"], f"🚀 {bot_name} {dir_str} Executed", decision_msg, color)
+                    
+                else: 
+                    decision_msg = f"⚠️ {bot_name} execution failed"
             else:
                 reason = f"conviction ({prob_win:.2%})" if direction_intent != 0.0 else "no trend"
                 decision_msg = f"❌ veto ({reason})"
+                
                 if direction_intent != 0.0:
                     state["skipped_trade"] = {"timestamp": meta, "entry_price": pricing["close"], "direction": direction_intent}
+                    
+                    # TRIGGER VETO WEBHOOK (Only trigger if there was intent but it was skipped)
+                    dir_str = "LONG" if direction_intent == 1.0 else "SHORT"
+                    send_discord_webhook(config["webhooks"]["veto"], f"🛡️ {bot_name} {dir_str} Vetoed", decision_msg, 0xFFA500)
             
             state["trade_logs"].append(f"🕒 [{meta}] {bot_name} action: {decision_msg}")
             
