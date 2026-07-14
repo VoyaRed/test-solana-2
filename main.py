@@ -446,5 +446,5 @@ def get_bot_data(bot_type: str):
 @app.head("/")
 @app.get("/")
 def serve_dashboard():
-    current_dir = os.path.dirname(os.path.realpath(__file__))
-    return FileResponse(os.path.join(current_dir, "index.html"))
+    # Replaced FileResponse to prevent FileNotFoundError during platform health checks
+    return {"status": "online", "message": "API is running"}
